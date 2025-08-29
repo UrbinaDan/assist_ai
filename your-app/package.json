@@ -1,8 +1,0 @@
-{
-  "name": "your-app",
-  "private": true,
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ]
-}
