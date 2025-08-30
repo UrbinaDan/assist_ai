@@ -1,0 +1,7 @@
+[
+  {
+    "id": "resume.txt::chunk0",
+    "text": "Led a cross-team DB migration to reduce API p95 latency by 40%. Mentored interns on Python testing and CI pipelines. Implemented caching and pagination for a high-traffic endpoint.",
+    "source": "resume.txt"
+  }
+]
