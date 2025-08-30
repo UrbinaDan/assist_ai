@@ -1,0 +1,29 @@
+# Node / Frontend
+node_modules/
+.npm/
+.pnpm-store/
+.next/
+dist/
+build/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.env.*
+
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+
+# Local data store
+store/
