@@ -44,3 +44,17 @@ def ingest(ev: TranscriptEvent):
             st.buffer_text = ""
             return {"emit": True, "data": out}
     return {"emit": False}
+
+@app.get("/health")
+def health():
+    from app.agent import RETRIEVER
+    status = "loaded" if (RETRIEVER and RETRIEVER.index is not None) else "missing"
+    return {"retriever": status}
+
+@app.get("/debug/retriever")
+def debug_retriever():
+    from app.agent import RETRIEVER
+    if not RETRIEVER or not RETRIEVER.index:
+        return {"loaded": False}
+    return {"loaded": True, "chunks": len(RETRIEVER.meta)}
+
