@@ -1,5 +1,4 @@
 import time, requests
-
 URL = "http://127.0.0.1:8000/ingest"
 sid = "demo2"
 
@@ -11,5 +10,5 @@ if __name__ == "__main__":
     post("So last quarter I led a latency reduction project")
     time.sleep(0.4)
     post(" focusing on our auth service and database hotspots")
-    time.sleep(1.1)  # let the pause trigger end-of-thought
-    post("")         # heartbeat to fire the emit
+    time.sleep(1.1)
+    post("")  # heartbeat to trigger end-of-thought

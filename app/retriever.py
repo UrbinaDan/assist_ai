@@ -15,7 +15,7 @@ class Retriever:
         idx_path = os.path.join(self.store_dir, "index.faiss")
         meta_path = os.path.join(self.store_dir, "meta.json")
         if not (os.path.exists(idx_path) and os.path.exists(meta_path)):
-            raise RuntimeError("FAISS store not found. Run scripts/build_index.py.")
+            raise RuntimeError("FAISS store not found. Run scripts/build_index.py first.")
         self.index = faiss.read_index(idx_path)
         with open(meta_path, "r", encoding="utf-8") as f:
             self.meta = json.load(f)
@@ -27,15 +27,22 @@ class Retriever:
         if query_vec.ndim == 1:
             query_vec = query_vec.reshape(1, -1).astype("float32")
         D, I = self.index.search(query_vec, k)
+        # IndexFlatL2 returns L2 distance (smaller = better). Convert to similarity-ish [0..1]
         out: List[Dict[str, Any]] = []
-        for rank, idx in enumerate(I[0]):
-            if idx == -1:
-                continue
-            m = self.meta[idx]
-            out.append({
-                "id": m["id"],
-                "text": m["text"],
-                "score": round(float(D[0][rank]), 3),  # cosine similarity (higher is better)
-                "meta": {"source": m.get("source")}
-            })
+        if len(D) and len(I):
+            mind = float(np.min(D))
+            maxd = float(np.max(D))
+            den = (maxd - mind + 1e-9)
+            for rank, idx in enumerate(I[0]):
+                if idx == -1:
+                    continue
+                m = self.meta[idx]
+                dist = float(D[0][rank])
+                sim = 1.0 - ((dist - mind) / den)  # normalize & invert
+                out.append({
+                    "id": m["id"],
+                    "text": m["text"],
+                    "score": round(sim, 3),
+                    "meta": {"source": m.get("source")}
+                })
         return out
