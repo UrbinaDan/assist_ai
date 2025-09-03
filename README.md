@@ -85,3 +85,15 @@ your-app/
 
 
 ´´´
+
+
+
+
+Suggested Order
+Step	Task	Time
+✅	Core backend + FAISS working	done
+🔥	Task 1: WebSocket server (backend)	30–60 min
+🔄	Task 2: Transcribe + send deltas (client)	30–90 min
+🧼	Task 3: Bugfix response_format error	10 min
+🧠	Task 4: Memory per session	30 min
+💡	Task 5: Simple dashboard or client overlay	60 min

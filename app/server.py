@@ -95,3 +95,7 @@ def debug_classify(p: ClassifyProbe):
 # curl -X POST http://127.0.0.1:8000/ingest \
 #   -H "Content-Type: application/json" \
 #   -d '{"session_id":"t1","text_delta":"Can you walk me through a time you led a project end to end?","final":true}'
+
+
+from app.ws import router as ws_router
+app.include_router(ws_router)
