@@ -59,50 +59,61 @@ class EndOfThought:
         longish = len(state.buffer_text.split()) >= 16
         return (stable and (paused or punct)) or (stable and longish)
 
-# -------- Classifier via OpenAI --------
+# -------- Classifier via OpenAI (Chat Completions JSON mode) --------
 INTENTS = ["small_talk", "behavioral", "technical", "scheduling", "compensation", "unknown"]
 
 def classify_question(text: str) -> Dict[str, Any]:
     client = _oai_client()
     system_msg = (
         "You classify a single, short utterance from a live interview or conversation.\n"
-        f"Return JSON with keys: intent (one of {INTENTS}), entities, confidence.\n"
+        f"Return a compact JSON object with keys: intent (one of {INTENTS}), entities, confidence.\n"
         "entities must include: company (string|null), role (string|null), "
         "skills (string[]), numbers (string[]), dates (string[]), times (string[]).\n"
         "Be conservative: if unsure, intent='unknown' and confidence <= 0.6."
     )
     try:
-        rsp = client.responses.create(
+        rsp = client.chat.completions.create(
             model="gpt-4o-mini",
-            response_format={"type":"json_object"},
-            input=[
-                {"role":"system","content":system_msg},
-                {"role":"user","content":f"Utterance: {text}"}
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": f"Utterance: {text}"}
             ],
-            max_output_tokens=200,
+            max_tokens=200,
+            temperature=0.2,
         )
-        data = json.loads(rsp.output_text)
+        raw = rsp.choices[0].message.content or "{}"
+        data = json.loads(raw)
+
         intent = data.get("intent", "unknown")
         if intent not in INTENTS:
             intent = "unknown"
-        ents = data.get("entities") or {}
-        ents.setdefault("company", None)
-        ents.setdefault("role", None)
-        for k in ("skills","numbers","dates","times"):
-            ents.setdefault(k, [])
-        conf = float(data.get("confidence", 0.5))
-        return {"intent":intent, "entities":ents, "confidence":max(0.0,min(1.0,conf))}
+        entities = data.get("entities") or {}
+        entities.setdefault("company", None)
+        entities.setdefault("role", None)
+        for k in ("skills", "numbers", "dates", "times"):
+            entities.setdefault(k, [])
+        confidence = float(data.get("confidence", 0.5))
+        return {
+            "intent": intent,
+            "entities": entities,
+            "confidence": max(0.0, min(1.0, confidence)),
+        }
     except Exception as e:
-        # fallback (no crash)
-        return {"intent":"unknown",
-                "entities":{"company":None,"role":None,"skills":[],"numbers":[],"dates":[],"times":[]},
-                "confidence":0.4, "error":str(e)}
+        print("[classifier] error:", e, flush=True)
+        return {
+            "intent": "unknown",
+            "entities": {"company": None, "role": None, "skills": [], "numbers": [], "dates": [], "times": []},
+            "confidence": 0.4,
+            "error": str(e),
+        }
 
-# -------- Retriever (injected at startup) --------
+# -------- Retriever (injected at startup by server.py) --------
 RETRIEVER: Optional[Retriever] = None
 
 def retrieve_context(query: str, k: int = 4) -> List[Dict[str, Any]]:
-    if RETRIEVER is None: return []
+    if RETRIEVER is None: 
+        return []
     qv = embed_query(query)
     return RETRIEVER.search(qv, k=k)
 
@@ -111,29 +122,32 @@ USE_OAI_DRAFTER = os.getenv("USE_OAI_DRAFTER", "false").lower() in ("1","true","
 
 def _draft_with_openai(text: str, ctx: List[Dict[str, Any]], prefs: Dict[str, Any]) -> Dict[str, Any]:
     client = _oai_client()
-    ctx_txt = "\n\n".join(f"[{i+1}] {c['text']}" for i,c in enumerate(ctx[:4])) or "No context."
+    ctx_txt = "\n\n".join(f"[{i+1}] {c['text']}" for i, c in enumerate(ctx[:4])) or "No context."
     system_msg = (
         "You are a real-time interview coach. Use ONLY the provided context snippets.\n"
         "Return JSON with keys: options (2-3 strings), follow_up (string), bridge (string).\n"
         "First-person, concise, each option <= 2 sentences. If context is weak, say 'Context is limited'."
     )
     try:
-        rsp = client.responses.create(
+        rsp = client.chat.completions.create(
             model="gpt-4o-mini",
-            response_format={"type":"json_object"},
-            input=[
-                {"role":"system","content":system_msg},
-                {"role":"user","content":f"Utterance: {text}\n\nContext:\n{ctx_txt}\n\nPrefs: {prefs}"}
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": f"Utterance: {text}\n\nContext:\n{ctx_txt}\n\nPrefs: {prefs}"}
             ],
-            max_output_tokens=300,
+            max_tokens=300,
+            temperature=0.3,
         )
-        data = json.loads(rsp.output_text)
-        options = data.get("options") or []
+        raw = rsp.choices[0].message.content or "{}"
+        data = json.loads(raw)
+        options = (data.get("options") or [])[:3]
         follow_up = data.get("follow_up") or "Would it help to go deeper on metrics or rollout?"
         bridge = data.get("bridge") or "Happy to share specifics."
-        return {"options": options[:3], "follow_up": follow_up, "bridge": bridge,
+        return {"options": options, "follow_up": follow_up, "bridge": bridge,
                 "ctx_ids": [c["id"] for c in ctx]}
-    except Exception:
+    except Exception as e:
+        print("[drafter] error:", e, flush=True)
         return _draft_local(text, ctx, prefs)
 
 def _draft_local(text: str, ctx: List[Dict[str, Any]], prefs: Dict[str, Any]) -> Dict[str, Any]:
