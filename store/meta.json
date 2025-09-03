@@ -3,5 +3,10 @@
     "id": "resume.txt::chunk0",
     "text": "Led a cross-team DB migration to reduce API p95 latency by 40%. Mentored interns on Python testing and CI pipelines. Implemented caching and pagination for a high-traffic endpoint.",
     "source": "resume.txt"
+  },
+  {
+    "id": "star_latency.md::chunk0",
+    "text": "S: Our auth API p95 was 420ms due to DB hotspots and an N+1 query pattern. T: Reduce p95 below 250ms while keeping correctness. A: Added targeted indexes, rewrote the query, introduced a read-replica, and added a short cache. Used tracing with OpenTelemetry to verify impact. R: p95 dropped to 240ms, errors -30%, infra cost -12%.",
+    "source": "star_latency.md"
   }
 ]
