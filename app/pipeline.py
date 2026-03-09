@@ -35,6 +35,8 @@ def append_delta(
         if st.buffer_speaker != speaker:
             st.pending_speaker_flush = True
             st.next_speaker = speaker
+            st.next_text_delta = delta
+            st.next_ts = ts
             return
 
     if speaker is not None:
@@ -65,6 +67,17 @@ def maybe_emit(
         st.pending_speaker_flush = False
         st.buffer_speaker = getattr(st, "next_speaker", st.buffer_speaker)
         st.next_speaker = None
+
+        # Start the next speaker buffer with the deferred delta (if any).
+        next_delta = getattr(st, "next_text_delta", None)
+        next_ts = getattr(st, "next_ts", None)
+        st.next_text_delta = None
+        st.next_ts = None
+        if next_delta:
+            if st.buffer_text and not st.buffer_text.endswith(" "):
+                st.buffer_text += " "
+            st.buffer_text += next_delta.strip()
+            st.last_token_ts = next_ts if next_ts is not None else time.time()
         return IngestResult(emit=True, data=out, reason="speaker_change")
 
     buf = st.buffer_text.strip()

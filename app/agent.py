@@ -49,6 +49,8 @@ class AgentState:
     last_final_hash: str = ""
     pending_speaker_flush: bool = False
     next_speaker: Optional[str] = None
+    next_text_delta: Optional[str] = None
+    next_ts: Optional[float] = None
 
     usage: Dict[str, Any] = field(default_factory=lambda: {
         "by_model": {},  # model -> {"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}

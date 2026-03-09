@@ -24,6 +24,9 @@ async def websocket_endpoint(ws: WebSocket):
 
                 # Support both append-delta and replace semantics.
                 if (data.mode or "append") == "replace":
+                    # If speaker changes while we have buffered text, flush first to preserve separation.
+                    if speaker and state.buffer_text.strip() and state.buffer_speaker != speaker:
+                        _ = maybe_emit(state, final=True, detector=DETECTOR)
                     state.buffer_text = (data.text or "").strip()
                     if speaker:
                         state.buffer_speaker = speaker
