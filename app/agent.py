@@ -26,10 +26,15 @@ def embed_query(text: str, *, state: Optional["AgentState"] = None) -> np.ndarra
     rsp = client.embeddings.create(model=EMBED_MODEL, input=text)
     u = getattr(rsp, "usage", None)
     if state is not None and u is not None:
+        # Embeddings charge only input tokens; prefer prompt_tokens for consistency
+        # with chat models, but fall back to total_tokens if needed.
+        emb_prompt = _safe_int(
+            getattr(u, "prompt_tokens", getattr(u, "total_tokens", 0))
+        )
         _record_usage(
             state,
             model=EMBED_MODEL,
-            prompt_tokens=_safe_int(getattr(u, "total_tokens", 0)),
+            prompt_tokens=emb_prompt,
             completion_tokens=0,
         )
     emb = rsp.data[0].embedding
