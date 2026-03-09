@@ -4,14 +4,14 @@ import app.agent as agent
 
 def test_websocket_message_flow(monkeypatch):
     # --- stub OpenAI-dependent pieces so test is fast/offline ---
-    def fake_classify(text: str):
+    def fake_classify(text: str, **kwargs):
         return {
             "intent": "behavioral",
             "entities": {"company": None, "role": None, "skills": [], "numbers": [], "dates": [], "times": []},
             "confidence": 0.9,
         }
 
-    def fake_retrieve(query: str, k: int = 4):
+    def fake_retrieve(query: str, k: int = 4, **kwargs):
         return [{"id": "fake::0", "text": "demo STAR note", "score": 0.92, "meta": {"source": "fake"}}]
 
     monkeypatch.setattr(agent, "classify_question", fake_classify, raising=True)

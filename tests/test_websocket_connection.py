@@ -11,6 +11,7 @@ def test_websocket_connection():
             "text_delta": "Hello?",
             "final": False
         })
-        # Receive a response to confirm it's working
+        # Receive a response to confirm it's working, without forcing an LLM call.
         response = websocket.receive_json()
-        assert "data" in response
+        assert response.get("emit") is False
+        assert "reason" in response

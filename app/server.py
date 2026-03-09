@@ -1,22 +1,34 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-import time, hashlib, sys
+import time, sys
+from pathlib import Path
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 import app.agent as agent               # import the module so we can inject into agent.RETRIEVER
-from app.agent import AgentState, EndOfThought, process_turn
+from app.agent import AgentState, EndOfThought
 from app.retriever import Retriever
+from app.pipeline import append_delta, maybe_emit
 
 app = FastAPI()
 SESSIONS = {}
 DETECTOR = EndOfThought(pause_ms=900, stable_n=2)
 
-def _h(s: str) -> str:
-    return hashlib.md5(s.encode("utf-8")).hexdigest()
+STATIC_DIR = Path(__file__).parent / "static"
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+@app.get("/")
+def index():
+    if STATIC_DIR.exists():
+        return FileResponse(str(STATIC_DIR / "index.html"))
+    return {"ok": True, "hint": "Add app/static/index.html for a simple frontend."}
 
 class TranscriptEvent(BaseModel):
     session_id: str
     text_delta: str
     final: bool = False
+    speaker: str | None = None
 
 @app.on_event("startup")
 def _load_retriever():
@@ -32,39 +44,12 @@ def ingest(ev: TranscriptEvent):
         st = AgentState(session_id=ev.session_id)
         SESSIONS[ev.session_id] = st
 
-    # 1) Append incoming text
-    delta = (ev.text_delta or "").strip()
-    if delta:
-        if st.buffer_text and not st.buffer_text.endswith(" "):
-            st.buffer_text += " "
-        st.buffer_text += delta
-        st.last_token_ts = time.time()
-
-    # 2) If FINAL -> always emit (dedupe repeated finals)
-    if ev.final:
-        buf = st.buffer_text.strip()
-        h = _h(buf)
-        if st.last_final_hash == h:
-            print(f"[ingest] duplicate final ignored sid={ev.session_id}", file=sys.stderr, flush=True)
-            return {"emit": False}
-        st.last_final_hash = h
-
-        out = process_turn(st)
-        st.turns.append({"user": st.buffer_text, "assistant": out})
-        st.buffer_text = ""
-        print(f"[ingest] FINAL emit sid={ev.session_id}", file=sys.stderr, flush=True)
-        return {"emit": True, "data": out}
-
-    # 3) Otherwise gate on end-of-thought detector
-    if DETECTOR.should_emit(st):
-        out = process_turn(st)
-        st.turns.append({"user": st.buffer_text, "assistant": out})
-        st.buffer_text = ""
-        print(f"[ingest] EOT emit sid={ev.session_id}", file=sys.stderr, flush=True)
-        return {"emit": True, "data": out}
-
-    # No emit yet
-    return {"emit": False}
+    append_delta(st, ev.text_delta, ts=time.time(), speaker=ev.speaker)
+    res = maybe_emit(st, final=ev.final, detector=DETECTOR)
+    if res.emit:
+        print(f"[ingest] emit sid={ev.session_id} reason={res.reason}", file=sys.stderr, flush=True)
+        return {"emit": True, "data": res.data, "reason": res.reason}
+    return {"emit": False, "reason": res.reason}
 
 @app.get("/health")
 def health():
