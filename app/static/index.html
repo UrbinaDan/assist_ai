@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Assist — Realtime Coach + Notes</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="mark">Assist</div>
+          <div class="tag">realtime conversation assistant + notes</div>
+        </div>
+        <div class="session">
+          <label class="label">Session</label>
+          <input id="sessionId" class="input mono" />
+          <button id="newSession" class="btn btn-ghost">New</button>
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="panel">
+          <div class="panelTitle">Capture</div>
+          <div class="row">
+            <label class="label">Speaker</label>
+            <select id="speaker" class="input">
+              <option value="Me">Me</option>
+              <option value="Interviewer">Interviewer</option>
+              <option value="Participant 3">Participant 3</option>
+            </select>
+          </div>
+          <div class="row">
+            <button id="connect" class="btn">Connect</button>
+            <button id="mic" class="btn btn-ghost" disabled>Start mic</button>
+            <div id="status" class="status">disconnected</div>
+          </div>
+
+          <div class="subhead">Live buffer (not yet “final”)</div>
+          <div id="liveBuffer" class="box mono"></div>
+
+          <div class="subhead">Send text (manual)</div>
+          <div class="row">
+            <input id="manual" class="input mono grow" placeholder="Type a sentence and hit Send…" />
+            <button id="send" class="btn" disabled>Send</button>
+          </div>
+
+          <div class="subhead">Transcript</div>
+          <div id="transcript" class="box mono scroll"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panelTitle">Assistant</div>
+          <div class="subhead">Suggestions</div>
+          <ol id="suggestions" class="list"></ol>
+
+          <div class="row">
+            <div class="pill">
+              <div class="pillLabel">Confidence</div>
+              <div id="confidence" class="pillValue mono">—</div>
+            </div>
+            <div class="pill">
+              <div class="pillLabel">Turn cost</div>
+              <div id="turnCost" class="pillValue mono">$0.000000</div>
+            </div>
+            <div class="pill">
+              <div class="pillLabel">Session total</div>
+              <div id="sessionCost" class="pillValue mono">$0.000000</div>
+            </div>
+          </div>
+
+          <div class="subhead">Usage (turn)</div>
+          <pre id="usage" class="box mono"></pre>
+
+          <div class="subhead">Notes</div>
+          <div id="notes" class="box mono scroll"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
+
