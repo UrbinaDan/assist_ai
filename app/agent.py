@@ -16,9 +16,18 @@ def _oai_client() -> OpenAI:
 # -------- Embedding via OpenAI (keeps Codespace tiny) --------
 EMBED_MODEL = "text-embedding-3-small"  # 1536-dim
 
-def embed_query(text: str) -> np.ndarray:
+def embed_query(text: str, *, state: Optional["AgentState"] = None) -> np.ndarray:
     client = _oai_client()
-    emb = client.embeddings.create(model=EMBED_MODEL, input=text).data[0].embedding
+    rsp = client.embeddings.create(model=EMBED_MODEL, input=text)
+    u = getattr(rsp, "usage", None)
+    if state is not None and u is not None:
+        _record_usage(
+            state,
+            model=EMBED_MODEL,
+            prompt_tokens=_safe_int(getattr(u, "total_tokens", 0)),
+            completion_tokens=0,
+        )
+    emb = rsp.data[0].embedding
     return np.array(emb, dtype="float32")
 
 # -------- Minimal runtime state --------
@@ -125,7 +134,7 @@ def _record_usage(
         # keep the last delta cost available for per-turn display
         state.usage["last_turn"] = {"model": model, "cost_usd": round(row_delta_cost, 6)}
 
-def classify_question(text: str) -> Dict[str, Any]:
+def classify_question(text: str, *, state: Optional[AgentState] = None) -> Dict[str, Any]:
     client = _oai_client()
     system_msg = (
         "You classify a single, short utterance from a live interview or conversation.\n"
@@ -146,10 +155,12 @@ def classify_question(text: str) -> Dict[str, Any]:
             temperature=0.2,
         )
         u = getattr(rsp, "usage", None)
-        if u is not None:
-            # prompt_tokens / completion_tokens are standard; fall back if missing
+        if state is not None and u is not None:
             _record_usage(
-                AgentState(session_id="__tmp__") if False else state_placeholder,  # type: ignore[name-defined]
+                state,
+                model=CLASSIFIER_MODEL,
+                prompt_tokens=_safe_int(getattr(u, "prompt_tokens", 0)),
+                completion_tokens=_safe_int(getattr(u, "completion_tokens", 0)),
             )
         raw = rsp.choices[0].message.content or "{}"
         data = json.loads(raw)
@@ -189,7 +200,13 @@ def retrieve_context(query: str, k: int = 4, *, state: Optional[AgentState] = No
 # -------- Drafting: OpenAI (optional) or local template --------
 USE_OAI_DRAFTER = os.getenv("USE_OAI_DRAFTER", "false").lower() in ("1","true","yes")
 
-def _draft_with_openai(text: str, ctx: List[Dict[str, Any]], prefs: Dict[str, Any]) -> Dict[str, Any]:
+def _draft_with_openai(
+    text: str,
+    ctx: List[Dict[str, Any]],
+    prefs: Dict[str, Any],
+    *,
+    state: Optional[AgentState] = None,
+) -> Dict[str, Any]:
     client = _oai_client()
     ctx_txt = "\n\n".join(f"[{i+1}] {c['text']}" for i, c in enumerate(ctx[:4])) or "No context."
     system_msg = (
@@ -210,6 +227,14 @@ def _draft_with_openai(text: str, ctx: List[Dict[str, Any]], prefs: Dict[str, An
             max_tokens=300,
             temperature=0.3,
         )
+        u = getattr(rsp, "usage", None)
+        if state is not None and u is not None:
+            _record_usage(
+                state,
+                model=DRAFTER_MODEL,
+                prompt_tokens=_safe_int(getattr(u, "prompt_tokens", 0)),
+                completion_tokens=_safe_int(getattr(u, "completion_tokens", 0)),
+            )
         raw = rsp.choices[0].message.content or "{}"
         data = json.loads(raw)
         options = (data.get("options") or [])[:3]
@@ -247,8 +272,14 @@ def _draft_local(text: str, ctx: List[Dict[str, Any]], prefs: Dict[str, Any]) ->
         "ctx_ids": [c["id"] for c in ctx]
     }
 
-def draft_answer(text: str, ctx: List[Dict[str, Any]], prefs: Dict[str, Any]) -> Dict[str, Any]:
-    return _draft_with_openai(text, ctx, prefs) if USE_OAI_DRAFTER else _draft_local(text, ctx, prefs)
+def draft_answer(
+    text: str,
+    ctx: List[Dict[str, Any]],
+    prefs: Dict[str, Any],
+    *,
+    state: Optional[AgentState] = None,
+) -> Dict[str, Any]:
+    return _draft_with_openai(text, ctx, prefs, state=state) if USE_OAI_DRAFTER else _draft_local(text, ctx, prefs)
 
 def refine_answer(draft: Dict[str, Any], ctx: List[Dict[str, Any]]) -> Dict[str, Any]:
     return draft
@@ -273,11 +304,11 @@ def process_turn(state: AgentState) -> Optional[Dict[str, Any]]:
     # Reset per-turn usage delta
     state.usage["last_turn"] = None
 
-    cls = classify_question(state.buffer_text)
+    cls = classify_question(state.buffer_text, state=state)
     state.intent_history.append(cls["intent"])
     ctx = retrieve_context(state.buffer_text, k=4, state=state)
     state.retrieval_cache = {"last_query": state.buffer_text, "doc_ids": [c["id"] for c in ctx]}
-    draft = draft_answer(state.buffer_text, ctx, state.prefs)
+    draft = draft_answer(state.buffer_text, ctx, state.prefs, state=state)
     final = style_adapter(refine_answer(draft, ctx), state.prefs)
     score = confidence(ctx, cls.get("confidence", 0.5))
 
