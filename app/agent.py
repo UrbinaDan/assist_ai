@@ -2,7 +2,10 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 import time, os, json, re
 import numpy as np
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except Exception:  # pragma: no cover
+    OpenAI = None  # type: ignore[assignment]
 from app.retriever import Retriever
 
 # -------- OpenAI client (reads OPENAI_API_KEY from env) --------
@@ -10,6 +13,8 @@ _oai: Optional[OpenAI] = None
 def _oai_client() -> OpenAI:
     global _oai
     if _oai is None:
+        if OpenAI is None:
+            raise RuntimeError("openai package is not installed. Run: pip install -r requirements.txt")
         _oai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     return _oai
 
