@@ -46,6 +46,7 @@ class AgentState:
     session_id: str
     buffer_text: str = ""
     buffer_speaker: str = "Speaker 1"
+    mode: str = "coach"  # "coach" | "notes" (or "hybrid" later)
     last_emit_ts: float = 0.0
     last_token_ts: float = 0.0
     intent_history: List[str] = field(default_factory=list)
@@ -72,6 +73,8 @@ class AgentState:
         "bullets": [],
         "action_items": [],
         "decisions": [],
+        "follow_ups": [],
+        "topics": [],
     })
 
 class EndOfThought:
@@ -329,8 +332,24 @@ def process_turn(state: AgentState) -> Optional[Dict[str, Any]]:
     score = confidence(ctx, cls.get("confidence", 0.5))
 
     _update_notes(state, speaker=getattr(state, "buffer_speaker", "Speaker 1"), text=state.buffer_text)
+    mode = getattr(state, "mode", "coach") or "coach"
+    speaker = getattr(state, "buffer_speaker", "Speaker 1")
+
+    if mode == "notes":
+        # Notes-focused schema: emphasize notes and usage.
+        return {
+            "mode": "notes",
+            "speaker": speaker,
+            "transcript": state.buffer_text,
+            "intent": cls["intent"],
+            "notes": state.notes,
+            "usage": state.usage,
+        }
+
+    # Default coach schema
     return {
-        "speaker": getattr(state, "buffer_speaker", "Speaker 1"),
+        "mode": "coach",
+        "speaker": speaker,
         "transcript": state.buffer_text,
         "suggestions": final["options"],
         "follow_up": final["follow_up"],
@@ -358,6 +377,23 @@ def _update_notes(state: AgentState, *, speaker: str, text: str) -> None:
         state.notes["decisions"].append(bullet)
         state.notes["decisions"] = state.notes["decisions"][-20:]
 
-    if any(p in tl for p in ["action item", "todo", "we need to", "we should", "follow up", "i will", "i'll"]):
+    if any(p in tl for p in ["action item", "todo", "we need to", "we should", "i will", "i'll"]):
         state.notes["action_items"].append(bullet)
         state.notes["action_items"] = state.notes["action_items"][-30:]
+
+    if "follow up" in tl or "follow-up" in tl:
+        state.notes["follow_ups"].append(bullet)
+        state.notes["follow_ups"] = state.notes["follow_ups"][-30:]
+
+    # Extremely lightweight topic labeling: intent plus a coarse tag.
+    topics = state.notes.setdefault("topics", [])
+    intent = state.intent_history[-1] if state.intent_history else "unknown"
+    coarse = "other"
+    if any(k in tl for k in ["deadline", "date", "next week", "q", "quarter"]):
+        coarse = "timing"
+    elif any(k in tl for k in ["metric", "kpi", "impact", "result", "%", "percent"]):
+        coarse = "impact"
+    elif any(k in tl for k in ["roadmap", "plan", "strategy"]):
+        coarse = "planning"
+    topics.append({"intent": intent, "tag": coarse})
+    state.notes["topics"] = topics[-80:]

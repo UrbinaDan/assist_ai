@@ -14,6 +14,7 @@ class DeltaIn(BaseModel):
     final: Optional[bool] = False
     speaker: Optional[str] = None
     mode: Optional[str] = "append"  # "append" | "replace"
+    session_mode: Optional[str] = None  # "coach" | "notes"
 
 class AgentResponse(BaseModel):
     emit: bool

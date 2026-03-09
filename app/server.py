@@ -29,6 +29,7 @@ class TranscriptEvent(BaseModel):
     text_delta: str
     final: bool = False
     speaker: str | None = None
+    session_mode: str | None = None  # "coach" | "notes"
 
 @app.on_event("startup")
 def _load_retriever():
@@ -47,6 +48,9 @@ def ingest(ev: TranscriptEvent):
     if not st:
         st = AgentState(session_id=ev.session_id)
         SESSIONS[ev.session_id] = st
+
+    if ev.session_mode in ("coach", "notes"):
+        st.mode = ev.session_mode
 
     append_delta(st, ev.text_delta, ts=time.time(), speaker=ev.speaker)
     res = maybe_emit(st, final=ev.final, detector=DETECTOR)

@@ -22,6 +22,10 @@ async def websocket_endpoint(ws: WebSocket):
                 state = sessions.setdefault(data.session_id, AgentState(session_id=data.session_id))
                 speaker = data.speaker
 
+                # Optional session mode switch (coach vs notes).
+                if data.session_mode in ("coach", "notes"):
+                    state.mode = data.session_mode
+
                 # Support both append-delta and replace semantics.
                 if (data.mode or "append") == "replace":
                     # If speaker changes while we have buffered text, flush first to preserve separation.
