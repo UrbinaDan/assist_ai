@@ -53,7 +53,7 @@ class AgentState:
     usage: Dict[str, Any] = field(default_factory=lambda: {
         "by_model": {},  # model -> {"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}
         "cost_usd_total": 0.0,
-        "last_turn": None,
+        "turn": {"by_model": {}, "cost_usd": 0.0},
     })
 
     notes: Dict[str, Any] = field(default_factory=lambda: {
@@ -123,16 +123,20 @@ def _record_usage(
 
     price = PRICES_PER_1M_TOKENS.get(model)
     if price:
-        state.usage["cost_usd_total"] = round(
-            float(state.usage.get("cost_usd_total", 0.0))
-            + (row_delta_cost := (
-                (_safe_int(prompt_tokens) / 1_000_000.0) * price.get("input", 0.0)
-                + (_safe_int(completion_tokens) / 1_000_000.0) * price.get("output", 0.0)
-            )),
-            6,
+        row_delta_cost = (
+            (_safe_int(prompt_tokens) / 1_000_000.0) * price.get("input", 0.0)
+            + (_safe_int(completion_tokens) / 1_000_000.0) * price.get("output", 0.0)
         )
-        # keep the last delta cost available for per-turn display
-        state.usage["last_turn"] = {"model": model, "cost_usd": round(row_delta_cost, 6)}
+        state.usage["cost_usd_total"] = round(float(state.usage.get("cost_usd_total", 0.0)) + row_delta_cost, 6)
+
+        turn = state.usage.setdefault("turn", {"by_model": {}, "cost_usd": 0.0})
+        turn["cost_usd"] = round(float(turn.get("cost_usd", 0.0)) + row_delta_cost, 6)
+        t_by_model = turn.setdefault("by_model", {})
+        trow = t_by_model.setdefault(model, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cost_usd": 0.0})
+        trow["prompt_tokens"] += _safe_int(prompt_tokens)
+        trow["completion_tokens"] += _safe_int(completion_tokens)
+        trow["total_tokens"] += _safe_int(prompt_tokens) + _safe_int(completion_tokens)
+        trow["cost_usd"] = round(float(trow.get("cost_usd", 0.0)) + row_delta_cost, 6)
 
 def classify_question(text: str, *, state: Optional[AgentState] = None) -> Dict[str, Any]:
     client = _oai_client()
@@ -250,11 +254,11 @@ def _draft_local(text: str, ctx: List[Dict[str, Any]], prefs: Dict[str, Any]) ->
     if not ctx:
         return {
             "options": [
-                "I can walk through a recent end-to-end project covering goal, constraints, actions, and results.",
-                "Do you prefer a technical performance example or a cross-team delivery story?"
+                "Context is limited from your background docs—tell me which experience you want to use (project name + 1 line impact), and I’ll shape a strong answer.",
+                "If you share 2–3 facts (your role, constraint, measurable result), I’ll draft a concise response and a follow-up question."
             ],
-            "follow_up": "Do you want the short version or a deeper STAR breakdown?",
-            "bridge": "Happy to tailor the story to what’s most relevant.",
+            "follow_up": "What role/company is this for, and which project should I anchor on?",
+            "bridge": "Once I have those details, I can make it specific and credible.",
             "ctx_ids": []
         }
     snips = [c["text"] for c in ctx[:2]]
@@ -301,8 +305,8 @@ def confidence(ctx: List[Dict[str, Any]], cls_conf: float) -> float:
     return round(0.5*cls_conf + 0.5*top, 2)
 
 def process_turn(state: AgentState) -> Optional[Dict[str, Any]]:
-    # Reset per-turn usage delta
-    state.usage["last_turn"] = None
+    # Reset per-turn usage ledger
+    state.usage["turn"] = {"by_model": {}, "cost_usd": 0.0}
 
     cls = classify_question(state.buffer_text, state=state)
     state.intent_history.append(cls["intent"])
