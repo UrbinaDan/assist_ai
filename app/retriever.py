@@ -1,7 +1,10 @@
 import os, json
 from typing import List, Dict, Any
 import numpy as np
-import faiss
+try:
+    import faiss  # type: ignore
+except Exception:  # pragma: no cover
+    faiss = None  # type: ignore[assignment]
 
 STORE_DIR = "store"
 
@@ -12,6 +15,8 @@ class Retriever:
         self.meta = []
 
     def load(self):
+        if faiss is None:
+            raise RuntimeError("faiss is not installed. Run: pip install -r requirements.txt")
         idx_path = os.path.join(self.store_dir, "index.faiss")
         meta_path = os.path.join(self.store_dir, "meta.json")
         if not (os.path.exists(idx_path) and os.path.exists(meta_path)):

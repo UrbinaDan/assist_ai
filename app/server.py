@@ -33,8 +33,12 @@ class TranscriptEvent(BaseModel):
 @app.on_event("startup")
 def _load_retriever():
     """Load FAISS index at startup and inject into agent.RETRIEVER."""
-    agent.RETRIEVER = Retriever().load()        # inject the retriever into the agent module
-    print("FAISS retriever loaded and injected into agent.", file=sys.stderr, flush=True)
+    try:
+        agent.RETRIEVER = Retriever().load()        # inject the retriever into the agent module
+        print("FAISS retriever loaded and injected into agent.", file=sys.stderr, flush=True)
+    except Exception as e:
+        agent.RETRIEVER = None
+        print(f"FAISS retriever not available: {e}", file=sys.stderr, flush=True)
 
 @app.post("/ingest")
 def ingest(ev: TranscriptEvent):
