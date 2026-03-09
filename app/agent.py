@@ -26,6 +26,7 @@ def embed_query(text: str) -> np.ndarray:
 class AgentState:
     session_id: str
     buffer_text: str = ""
+    buffer_speaker: str = "Speaker 1"
     last_emit_ts: float = 0.0
     last_token_ts: float = 0.0
     intent_history: List[str] = field(default_factory=list)
@@ -37,11 +38,27 @@ class AgentState:
     })
     retrieval_cache: Dict[str, Any] = field(default_factory=dict)
     last_final_hash: str = ""
+    pending_speaker_flush: bool = False
+    next_speaker: Optional[str] = None
+
+    usage: Dict[str, Any] = field(default_factory=lambda: {
+        "by_model": {},  # model -> {"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}
+        "cost_usd_total": 0.0,
+        "last_turn": None,
+    })
+
+    notes: Dict[str, Any] = field(default_factory=lambda: {
+        "bullets": [],
+        "action_items": [],
+        "decisions": [],
+    })
 
 class EndOfThought:
-    def __init__(self, pause_ms: int = 900, stable_n: int = 2):
+    def __init__(self, pause_ms: int = 900, stable_n: int = 2, min_words: int = 10, max_words: int = 60):
         self.pause_ms = pause_ms
         self.stable_n = stable_n
+        self.min_words = min_words
+        self.max_words = max_words
 
     def intent_stable(self, intents: List[str]) -> bool:
         if len(intents) < self.stable_n:
@@ -55,12 +72,58 @@ class EndOfThought:
         now = time.time()
         paused = (now - state.last_token_ts) * 1000 >= self.pause_ms
         punct = self.strong_punct(state.buffer_text)
-        stable = self.intent_stable(state.intent_history)
-        longish = len(state.buffer_text.split()) >= 16
-        return (stable and (paused or punct)) or (stable and longish)
+        words = len(state.buffer_text.split())
+        longish = words >= self.min_words
+        too_long = words >= self.max_words
+        # Latency-sensitive: do not require an LLM classifier to decide turn boundaries.
+        # Emit when there's a pause and the buffer looks like a meaningful unit.
+        return (paused and (punct or longish)) or too_long
 
 # -------- Classifier via OpenAI (Chat Completions JSON mode) --------
 INTENTS = ["small_talk", "behavioral", "technical", "scheduling", "compensation", "unknown"]
+CLASSIFIER_MODEL = os.getenv("CLASSIFIER_MODEL", "gpt-4.1-nano")
+DRAFTER_MODEL = os.getenv("DRAFTER_MODEL", "gpt-4o-mini")
+
+PRICES_PER_1M_TOKENS: Dict[str, Dict[str, float]] = {
+    # Source: OpenAI pricing docs (Mar 2026). If you change models, add them here.
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    "gpt-4.1-nano": {"input": 0.10, "output": 0.40},
+    "text-embedding-3-small": {"input": 0.02, "output": 0.00},
+}
+
+
+def _safe_int(x: Any) -> int:
+    try:
+        return int(x)
+    except Exception:
+        return 0
+
+
+def _record_usage(
+    state: AgentState,
+    *,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> None:
+    by_model = state.usage.setdefault("by_model", {})
+    row = by_model.setdefault(model, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+    row["prompt_tokens"] += _safe_int(prompt_tokens)
+    row["completion_tokens"] += _safe_int(completion_tokens)
+    row["total_tokens"] += _safe_int(prompt_tokens) + _safe_int(completion_tokens)
+
+    price = PRICES_PER_1M_TOKENS.get(model)
+    if price:
+        state.usage["cost_usd_total"] = round(
+            float(state.usage.get("cost_usd_total", 0.0))
+            + (row_delta_cost := (
+                (_safe_int(prompt_tokens) / 1_000_000.0) * price.get("input", 0.0)
+                + (_safe_int(completion_tokens) / 1_000_000.0) * price.get("output", 0.0)
+            )),
+            6,
+        )
+        # keep the last delta cost available for per-turn display
+        state.usage["last_turn"] = {"model": model, "cost_usd": round(row_delta_cost, 6)}
 
 def classify_question(text: str) -> Dict[str, Any]:
     client = _oai_client()
@@ -73,7 +136,7 @@ def classify_question(text: str) -> Dict[str, Any]:
     )
     try:
         rsp = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=CLASSIFIER_MODEL,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": system_msg},
@@ -82,6 +145,12 @@ def classify_question(text: str) -> Dict[str, Any]:
             max_tokens=200,
             temperature=0.2,
         )
+        u = getattr(rsp, "usage", None)
+        if u is not None:
+            # prompt_tokens / completion_tokens are standard; fall back if missing
+            _record_usage(
+                AgentState(session_id="__tmp__") if False else state_placeholder,  # type: ignore[name-defined]
+            )
         raw = rsp.choices[0].message.content or "{}"
         data = json.loads(raw)
 
@@ -111,10 +180,10 @@ def classify_question(text: str) -> Dict[str, Any]:
 # -------- Retriever (injected at startup by server.py) --------
 RETRIEVER: Optional[Retriever] = None
 
-def retrieve_context(query: str, k: int = 4) -> List[Dict[str, Any]]:
+def retrieve_context(query: str, k: int = 4, *, state: Optional[AgentState] = None) -> List[Dict[str, Any]]:
     if RETRIEVER is None: 
         return []
-    qv = embed_query(query)
+    qv = embed_query(query, state=state)
     return RETRIEVER.search(qv, k=k)
 
 # -------- Drafting: OpenAI (optional) or local template --------
@@ -124,13 +193,15 @@ def _draft_with_openai(text: str, ctx: List[Dict[str, Any]], prefs: Dict[str, An
     client = _oai_client()
     ctx_txt = "\n\n".join(f"[{i+1}] {c['text']}" for i, c in enumerate(ctx[:4])) or "No context."
     system_msg = (
-        "You are a real-time interview coach. Use ONLY the provided context snippets.\n"
+        "You are a real-time conversation assistant and note taker.\n"
+        "If the user asks for answers grounded in their background, ONLY use the provided context snippets.\n"
+        "If context is missing or thin, do NOT guess details—ask 1-2 targeted questions instead.\n"
         "Return JSON with keys: options (2-3 strings), follow_up (string), bridge (string).\n"
         "First-person, concise, each option <= 2 sentences. If context is weak, say 'Context is limited'."
     )
     try:
         rsp = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=DRAFTER_MODEL,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": system_msg},
@@ -199,18 +270,47 @@ def confidence(ctx: List[Dict[str, Any]], cls_conf: float) -> float:
     return round(0.5*cls_conf + 0.5*top, 2)
 
 def process_turn(state: AgentState) -> Optional[Dict[str, Any]]:
+    # Reset per-turn usage delta
+    state.usage["last_turn"] = None
+
     cls = classify_question(state.buffer_text)
     state.intent_history.append(cls["intent"])
-    ctx = retrieve_context(state.buffer_text, k=4)
+    ctx = retrieve_context(state.buffer_text, k=4, state=state)
     state.retrieval_cache = {"last_query": state.buffer_text, "doc_ids": [c["id"] for c in ctx]}
     draft = draft_answer(state.buffer_text, ctx, state.prefs)
     final = style_adapter(refine_answer(draft, ctx), state.prefs)
     score = confidence(ctx, cls.get("confidence", 0.5))
+
+    _update_notes(state, speaker=getattr(state, "buffer_speaker", "Speaker 1"), text=state.buffer_text)
     return {
+        "speaker": getattr(state, "buffer_speaker", "Speaker 1"),
+        "transcript": state.buffer_text,
         "suggestions": final["options"],
         "follow_up": final["follow_up"],
         "bridge": final["bridge"],
         "confidence": score,
         "context_ids": final["ctx_ids"],
-        "intent": cls["intent"]
+        "intent": cls["intent"],
+        "notes": state.notes,
+        "usage": state.usage,
     }
+
+
+def _update_notes(state: AgentState, *, speaker: str, text: str) -> None:
+    t = (text or "").strip()
+    if not t:
+        return
+
+    # Lightweight notes so we don't add extra model calls.
+    bullet = f"{speaker}: {t}"
+    state.notes["bullets"].append(bullet)
+    state.notes["bullets"] = state.notes["bullets"][-60:]
+
+    tl = t.lower()
+    if any(p in tl for p in ["we decided", "decision:", "let's go with", "we will proceed with"]):
+        state.notes["decisions"].append(bullet)
+        state.notes["decisions"] = state.notes["decisions"][-20:]
+
+    if any(p in tl for p in ["action item", "todo", "we need to", "we should", "follow up", "i will", "i'll"]):
+        state.notes["action_items"].append(bullet)
+        state.notes["action_items"] = state.notes["action_items"][-30:]
