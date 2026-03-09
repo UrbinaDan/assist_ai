@@ -297,8 +297,12 @@ def draft_answer(
     prefs: Dict[str, Any],
     *,
     state: Optional[AgentState] = None,
+    fast_only: bool = False,
 ) -> Dict[str, Any]:
-    return _draft_with_openai(text, ctx, prefs, state=state) if USE_OAI_DRAFTER else _draft_local(text, ctx, prefs)
+    # For speculative emits, stay on the local path to avoid extra latency.
+    if fast_only or not USE_OAI_DRAFTER:
+        return _draft_local(text, ctx, prefs)
+    return _draft_with_openai(text, ctx, prefs, state=state)
 
 def refine_answer(draft: Dict[str, Any], ctx: List[Dict[str, Any]]) -> Dict[str, Any]:
     return draft
@@ -319,7 +323,7 @@ def confidence(ctx: List[Dict[str, Any]], cls_conf: float) -> float:
     top = ctx[0]["score"] if ctx else 0.0
     return round(0.5*cls_conf + 0.5*top, 2)
 
-def process_turn(state: AgentState) -> Optional[Dict[str, Any]]:
+def process_turn(state: AgentState, *, kind: str = "final") -> Optional[Dict[str, Any]]:
     # Reset per-turn usage ledger
     state.usage["turn"] = {"by_model": {}, "cost_usd": 0.0}
 
@@ -327,7 +331,13 @@ def process_turn(state: AgentState) -> Optional[Dict[str, Any]]:
     state.intent_history.append(cls["intent"])
     ctx = retrieve_context(state.buffer_text, k=4, state=state)
     state.retrieval_cache = {"last_query": state.buffer_text, "doc_ids": [c["id"] for c in ctx]}
-    draft = draft_answer(state.buffer_text, ctx, state.prefs, state=state)
+    draft = draft_answer(
+        state.buffer_text,
+        ctx,
+        state.prefs,
+        state=state,
+        fast_only=(kind == "speculative"),
+    )
     final = style_adapter(refine_answer(draft, ctx), state.prefs)
     score = confidence(ctx, cls.get("confidence", 0.5))
 

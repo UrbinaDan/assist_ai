@@ -55,9 +55,9 @@ def ingest(ev: TranscriptEvent):
     append_delta(st, ev.text_delta, ts=time.time(), speaker=ev.speaker)
     res = maybe_emit(st, final=ev.final, detector=DETECTOR)
     if res.emit:
-        print(f"[ingest] emit sid={ev.session_id} reason={res.reason}", file=sys.stderr, flush=True)
-        return {"emit": True, "data": res.data, "reason": res.reason}
-    return {"emit": False, "reason": res.reason}
+        print(f"[ingest] emit sid={ev.session_id} kind={res.kind} reason={res.reason}", file=sys.stderr, flush=True)
+        return {"emit": True, "kind": res.kind, "data": res.data, "reason": res.reason}
+    return {"emit": False, "kind": res.kind, "reason": res.reason}
 
 @app.get("/health")
 def health():

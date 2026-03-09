@@ -16,6 +16,7 @@ def _h(s: str) -> str:
 class IngestResult:
     emit: bool
     data: Optional[Dict[str, Any]] = None
+    kind: str = "none"  # "none" | "speculative" | "final"
     reason: Optional[str] = None
 
 
@@ -58,7 +59,7 @@ def maybe_emit(
 ) -> IngestResult:
     # If we deferred because speaker changed, flush current buffer now.
     if getattr(st, "pending_speaker_flush", False) and st.buffer_text.strip():
-        out = process_turn(st)
+        out = process_turn(st, kind="final")
         st.turns.append(
             {"speaker": getattr(st, "buffer_speaker", None), "user": st.buffer_text, "assistant": out}
         )
@@ -78,7 +79,7 @@ def maybe_emit(
                 st.buffer_text += " "
             st.buffer_text += next_delta.strip()
             st.last_token_ts = next_ts if next_ts is not None else time.time()
-        return IngestResult(emit=True, data=out, reason="speaker_change")
+        return IngestResult(emit=True, data=out, kind="final", reason="speaker_change")
 
     buf = st.buffer_text.strip()
     if not buf:
@@ -91,19 +92,20 @@ def maybe_emit(
             return IngestResult(emit=False, reason="duplicate_final")
         st.last_final_hash = h
 
-        out = process_turn(st)
+        out = process_turn(st, kind="final")
         st.turns.append({"speaker": getattr(st, "buffer_speaker", None), "user": st.buffer_text, "assistant": out})
         st.buffer_text = ""
         st.last_emit_ts = time.time()
-        return IngestResult(emit=True, data=out, reason="final")
+        return IngestResult(emit=True, data=out, kind="final", reason="final")
 
     # Otherwise gate on end-of-thought detector
     if detector.should_emit(st):
-        out = process_turn(st)
+        # Treat detector-driven emits as speculative by default: fast, lightweight suggestions.
+        out = process_turn(st, kind="speculative")
         st.turns.append({"speaker": getattr(st, "buffer_speaker", None), "user": st.buffer_text, "assistant": out})
         st.buffer_text = ""
         st.last_emit_ts = time.time()
-        return IngestResult(emit=True, data=out, reason="eot")
+        return IngestResult(emit=True, data=out, kind="speculative", reason="eot")
 
-    return IngestResult(emit=False, reason="no_emit")
+    return IngestResult(emit=False, kind="none", reason="no_emit")
 

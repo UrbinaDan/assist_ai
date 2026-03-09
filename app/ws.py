@@ -41,9 +41,11 @@ async def websocket_endpoint(ws: WebSocket):
 
                 res = maybe_emit(state, final=bool(data.final), detector=DETECTOR)
                 if res.emit:
-                    await ws.send_json({"emit": True, "data": res.data, "reason": res.reason})
+                    await ws.send_json(
+                        {"emit": True, "kind": res.kind, "data": res.data, "reason": res.reason}
+                    )
                 else:
-                    await ws.send_json({"emit": False, "reason": res.reason})
+                    await ws.send_json({"emit": False, "kind": res.kind, "reason": res.reason})
             except Exception as e:
                 await ws.send_json({"error": str(e)})
     except WebSocketDisconnect:

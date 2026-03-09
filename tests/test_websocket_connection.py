@@ -15,3 +15,4 @@ def test_websocket_connection():
         response = websocket.receive_json()
         assert response.get("emit") is False
         assert "reason" in response
+        assert "kind" in response
