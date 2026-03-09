@@ -49,6 +49,8 @@ def append_delta(
         st.buffer_text += delta
 
     st.last_token_ts = ts if ts is not None else time.time()
+    # Bump last_seen for basic session tracking
+    st.last_seen_at = time.time()
 
 
 def maybe_emit(

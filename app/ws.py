@@ -22,6 +22,12 @@ async def websocket_endpoint(ws: WebSocket):
                 state = sessions.setdefault(data.session_id, AgentState(session_id=data.session_id))
                 speaker = data.speaker
 
+                # Touch session activity and track roles
+                state.last_seen_at = time.time()
+                if speaker:
+                    # Default role label is the speaker label itself; can be refined later.
+                    state.roles.setdefault(speaker, speaker)
+
                 # Optional session mode switch (coach vs notes).
                 if data.session_mode in ("coach", "notes"):
                     state.mode = data.session_mode

@@ -99,4 +99,8 @@ body{
 }
 .pillLabel{color:var(--muted); font-size:11px}
 .pillValue{font-weight:650}
+.modeToggle{display:flex; gap:6px; margin-left:8px}
+.btn.small{padding:6px 10px; font-size:12px}
+.btn-ghost.small{padding:6px 10px; font-size:12px}
+.modeToggle .active{border-color: var(--accent2); color:var(--accent2)}
 

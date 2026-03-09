@@ -17,6 +17,10 @@
           <label class="label">Session</label>
           <input id="sessionId" class="input mono" />
           <button id="newSession" class="btn btn-ghost">New</button>
+          <div class="modeToggle">
+            <button id="modeCoach" class="btn btn-ghost small active">Coach</button>
+            <button id="modeNotes" class="btn btn-ghost small">Notes</button>
+          </div>
         </div>
       </header>
 
@@ -75,6 +79,13 @@
 
           <div class="subhead">Notes</div>
           <div id="notes" class="box mono scroll"></div>
+
+          <div class="subhead">Cost & usage (session)</div>
+          <div class="row">
+            <button id="refreshUsage" class="btn btn-ghost small">Refresh</button>
+            <div id="modeLabel" class="label mono">mode: coach</div>
+          </div>
+          <pre id="usageFull" class="box mono scroll"></pre>
         </section>
       </main>
     </div>

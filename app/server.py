@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import time, sys
 from pathlib import Path
@@ -31,6 +31,32 @@ class TranscriptEvent(BaseModel):
     speaker: str | None = None
     session_mode: str | None = None  # "coach" | "notes"
 
+
+class SessionModeBody(BaseModel):
+    mode: str  # "coach" | "notes"
+
+
+class SessionSummary(BaseModel):
+    session_id: str
+    mode: str
+    created_at: float
+    last_seen_at: float
+    roles: dict[str, str]
+
+
+class UsageSummary(BaseModel):
+    session_id: str
+    mode: str
+    created_at: float
+    last_seen_at: float
+    usage: dict
+
+
+class NotesSummary(BaseModel):
+    session_id: str
+    mode: str
+    notes: dict
+
 @app.on_event("startup")
 def _load_retriever():
     """Load FAISS index at startup and inject into agent.RETRIEVER."""
@@ -49,6 +75,9 @@ def ingest(ev: TranscriptEvent):
         st = AgentState(session_id=ev.session_id)
         SESSIONS[ev.session_id] = st
 
+    # Touch session activity
+    st.last_seen_at = time.time()
+
     if ev.session_mode in ("coach", "notes"):
         st.mode = ev.session_mode
 
@@ -58,6 +87,66 @@ def ingest(ev: TranscriptEvent):
         print(f"[ingest] emit sid={ev.session_id} kind={res.kind} reason={res.reason}", file=sys.stderr, flush=True)
         return {"emit": True, "kind": res.kind, "data": res.data, "reason": res.reason}
     return {"emit": False, "kind": res.kind, "reason": res.reason}
+
+
+def _get_session_or_404(session_id: str) -> AgentState:
+    st = SESSIONS.get(session_id)
+    if not st:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return st
+
+
+@app.get("/session/{session_id}", response_model=SessionSummary)
+def get_session(session_id: str):
+    st = _get_session_or_404(session_id)
+    return SessionSummary(
+        session_id=session_id,
+        mode=st.mode,
+        created_at=st.created_at,
+        last_seen_at=st.last_seen_at,
+        roles=st.roles,
+    )
+
+
+@app.get("/session/{session_id}/mode", response_model=SessionModeBody)
+def get_session_mode(session_id: str):
+    st = _get_session_or_404(session_id)
+    return SessionModeBody(mode=st.mode)
+
+
+@app.post("/session/{session_id}/mode", response_model=SessionModeBody)
+def set_session_mode(session_id: str, body: SessionModeBody):
+    st = SESSIONS.get(session_id)
+    if not st:
+        st = AgentState(session_id=session_id)
+        SESSIONS[session_id] = st
+    if body.mode not in ("coach", "notes"):
+        raise HTTPException(status_code=400, detail="mode must be 'coach' or 'notes'")
+    st.mode = body.mode
+    st.last_seen_at = time.time()
+    return SessionModeBody(mode=st.mode)
+
+
+@app.get("/session/{session_id}/usage", response_model=UsageSummary)
+def get_session_usage(session_id: str):
+    st = _get_session_or_404(session_id)
+    return UsageSummary(
+        session_id=session_id,
+        mode=st.mode,
+        created_at=st.created_at,
+        last_seen_at=st.last_seen_at,
+        usage=st.usage,
+    )
+
+
+@app.get("/session/{session_id}/notes", response_model=NotesSummary)
+def get_session_notes(session_id: str):
+    st = _get_session_or_404(session_id)
+    return NotesSummary(
+        session_id=session_id,
+        mode=st.mode,
+        notes=st.notes,
+    )
 
 @app.get("/health")
 def health():

@@ -36,6 +36,7 @@ def embed_query(text: str, *, state: Optional["AgentState"] = None) -> np.ndarra
             model=EMBED_MODEL,
             prompt_tokens=emb_prompt,
             completion_tokens=0,
+            feature="embed",
         )
     emb = rsp.data[0].embedding
     return np.array(emb, dtype="float32")
@@ -47,6 +48,8 @@ class AgentState:
     buffer_text: str = ""
     buffer_speaker: str = "Speaker 1"
     mode: str = "coach"  # "coach" | "notes" (or "hybrid" later)
+    created_at: float = field(default_factory=lambda: time.time())
+    last_seen_at: float = field(default_factory=lambda: time.time())
     last_emit_ts: float = 0.0
     last_token_ts: float = 0.0
     intent_history: List[str] = field(default_factory=list)
@@ -65,6 +68,7 @@ class AgentState:
 
     usage: Dict[str, Any] = field(default_factory=lambda: {
         "by_model": {},  # model -> {"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}
+        "by_feature": {},  # feature -> same shape
         "cost_usd_total": 0.0,
         "turn": {"by_model": {}, "cost_usd": 0.0},
     })
@@ -76,6 +80,9 @@ class AgentState:
         "follow_ups": [],
         "topics": [],
     })
+
+    # Logical speaker roles per session, e.g. {"Me": "candidate", "Interviewer": "interviewer"}
+    roles: Dict[str, str] = field(default_factory=lambda: {})
 
 class EndOfThought:
     def __init__(self, pause_ms: int = 900, stable_n: int = 2, min_words: int = 10, max_words: int = 60):
@@ -129,6 +136,7 @@ def _record_usage(
     model: str,
     prompt_tokens: int,
     completion_tokens: int,
+    feature: str = "core",
 ) -> None:
     by_model = state.usage.setdefault("by_model", {})
     row = by_model.setdefault(model, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
@@ -152,6 +160,14 @@ def _record_usage(
         trow["completion_tokens"] += _safe_int(completion_tokens)
         trow["total_tokens"] += _safe_int(prompt_tokens) + _safe_int(completion_tokens)
         trow["cost_usd"] = round(float(trow.get("cost_usd", 0.0)) + row_delta_cost, 6)
+
+        # Aggregate by feature as well (coach vs notes vs embed, etc.)
+        by_feature = state.usage.setdefault("by_feature", {})
+        f = by_feature.setdefault(feature, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cost_usd": 0.0})
+        f["prompt_tokens"] += _safe_int(prompt_tokens)
+        f["completion_tokens"] += _safe_int(completion_tokens)
+        f["total_tokens"] += _safe_int(prompt_tokens) + _safe_int(completion_tokens)
+        f["cost_usd"] = round(float(f.get("cost_usd", 0.0)) + row_delta_cost, 6)
 
 def classify_question(text: str, *, state: Optional[AgentState] = None) -> Dict[str, Any]:
     client = _oai_client()
@@ -180,6 +196,7 @@ def classify_question(text: str, *, state: Optional[AgentState] = None) -> Dict[
                 model=CLASSIFIER_MODEL,
                 prompt_tokens=_safe_int(getattr(u, "prompt_tokens", 0)),
                 completion_tokens=_safe_int(getattr(u, "completion_tokens", 0)),
+                feature="classifier",
             )
         raw = rsp.choices[0].message.content or "{}"
         data = json.loads(raw)
@@ -253,6 +270,7 @@ def _draft_with_openai(
                 model=DRAFTER_MODEL,
                 prompt_tokens=_safe_int(getattr(u, "prompt_tokens", 0)),
                 completion_tokens=_safe_int(getattr(u, "completion_tokens", 0)),
+                feature=f"{getattr(state, 'mode', 'coach')}_drafter",
             )
         raw = rsp.choices[0].message.content or "{}"
         data = json.loads(raw)
@@ -342,6 +360,9 @@ def process_turn(state: AgentState, *, kind: str = "final") -> Optional[Dict[str
     score = confidence(ctx, cls.get("confidence", 0.5))
 
     _update_notes(state, speaker=getattr(state, "buffer_speaker", "Speaker 1"), text=state.buffer_text)
+    # For final turns (only), optionally refine notes via LLM if enabled.
+    if kind == "final":
+        _enhance_notes_with_llm(state)
     mode = getattr(state, "mode", "coach") or "coach"
     speaker = getattr(state, "buffer_speaker", "Speaker 1")
 
@@ -407,3 +428,80 @@ def _update_notes(state: AgentState, *, speaker: str, text: str) -> None:
         coarse = "planning"
     topics.append({"intent": intent, "tag": coarse})
     state.notes["topics"] = topics[-80:]
+
+
+USE_OAI_NOTES = os.getenv("USE_OAI_NOTES", "false").lower() in ("1", "true", "yes")
+
+
+def _enhance_notes_with_llm(state: AgentState) -> None:
+    """Optional, LLM-based notes refinement. Only runs when USE_OAI_NOTES is true.
+
+    It summarizes the last few bullets and refines action items/decisions/follow-ups/topics.
+    """
+    if not USE_OAI_NOTES:
+        return
+    if not state.notes.get("bullets"):
+        return
+
+    client = _oai_client()
+    bullets = state.notes.get("bullets", [])[-12:]
+    existing_actions = state.notes.get("action_items", [])[-12:]
+    existing_decisions = state.notes.get("decisions", [])[-12:]
+    prompt = (
+        "You are a concise meeting notes assistant.\n"
+        "Given recent bullets, action items, and decisions, return JSON with keys:\n"
+        "summary (string, <= 3 sentences),\n"
+        "action_items (array of {text, owner?, due?}),\n"
+        "decisions (array of strings),\n"
+        "follow_ups (array of strings),\n"
+        "topics (array of short labels).\n"
+        "Be conservative and never hallucinate owners or dates; leave them null when unsure."
+    )
+    try:
+        rsp = client.chat.completions.create(
+            model=os.getenv("NOTES_MODEL", "gpt-4.1-nano"),
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": json.dumps({
+                    "bullets": bullets,
+                    "action_items": existing_actions,
+                    "decisions": existing_decisions,
+                })}
+            ],
+            max_tokens=400,
+            temperature=0.2,
+        )
+        raw = rsp.choices[0].message.content or "{}"
+        data = json.loads(raw)
+        if "summary" in data:
+            state.notes["summary"] = data["summary"]
+        if "action_items" in data:
+            # Store plain strings for now for UI simplicity.
+            items = []
+            for it in data.get("action_items", []):
+                if isinstance(it, str):
+                    items.append(it)
+                elif isinstance(it, dict) and it.get("text"):
+                    owner = it.get("owner")
+                    due = it.get("due")
+                    extra = []
+                    if owner:
+                        extra.append(f"owner={owner}")
+                    if due:
+                        extra.append(f"due={due}")
+                    suffix = f" ({', '.join(extra)})" if extra else ""
+                    items.append(f"{it['text']}{suffix}")
+            state.notes["action_items"] = items[-40:]
+        if "decisions" in data:
+            state.notes["decisions"] = [str(d) for d in data.get("decisions", [])][-40:]
+        if "follow_ups" in data:
+            state.notes["follow_ups"] = [str(f) for f in data.get("follow_ups", [])][-40:]
+        if "topics" in data:
+            # Merge with existing topics but keep it short.
+            cur = [t for t in state.notes.get("topics", []) if isinstance(t, dict)]
+            for label in data.get("topics", []):
+                cur.append({"intent": state.intent_history[-1] if state.intent_history else "unknown", "tag": str(label)})
+            state.notes["topics"] = cur[-80:]
+    except Exception as e:
+        print("[notes-llm] error:", e, flush=True)

@@ -21,6 +21,11 @@ const els = {
   sessionCost: document.getElementById("sessionCost"),
   usage: document.getElementById("usage"),
   notes: document.getElementById("notes"),
+  modeCoach: document.getElementById("modeCoach"),
+  modeNotes: document.getElementById("modeNotes"),
+  modeLabel: document.getElementById("modeLabel"),
+  refreshUsage: document.getElementById("refreshUsage"),
+  usageFull: document.getElementById("usageFull"),
 };
 
 els.sessionId.value = localStorage.getItem("assist_session_id") || randId();
@@ -43,6 +48,7 @@ let recognition = null;
 let micOn = false;
 let lastSentReplace = "";
 let replaceTimer = null;
+let currentMode = "coach";
 
 function setStatus(s) {
   els.status.textContent = s;
@@ -64,9 +70,13 @@ function fmtUsd(x) {
 }
 
 function renderAssistant(data) {
-  const sug = Array.isArray(data?.suggestions) ? data.suggestions : [];
+  const mode = data?.mode || currentMode;
+  currentMode = mode;
+  updateModeButtons();
+  const sug = mode === "coach" && Array.isArray(data?.suggestions) ? data.suggestions : [];
   els.suggestions.innerHTML = sug.map((s) => `<li>${escapeHtml(s)}</li>`).join("");
-  els.confidence.textContent = typeof data?.confidence === "number" ? data.confidence.toFixed(2) : "—";
+  els.confidence.textContent =
+    mode === "coach" && typeof data?.confidence === "number" ? data.confidence.toFixed(2) : "—";
 
   const usage = data?.usage || {};
   const turn = usage?.turn || {};
@@ -92,7 +102,8 @@ function escapeHtml(s) {
 }
 
 function appendTranscriptLine(speaker, text) {
-  const line = `${speaker || "Speaker"}: ${text || ""}`.trim();
+  const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const line = `[${ts}] ${speaker || "Speaker"}: ${text || ""}`.trim();
   if (!line) return;
   els.transcript.textContent = (els.transcript.textContent ? els.transcript.textContent + "\n" : "") + line;
   els.transcript.scrollTop = els.transcript.scrollHeight;
@@ -147,6 +158,7 @@ function startMic() {
           final: false,
           ts: Date.now() / 1000,
           speaker: els.speaker.value,
+          session_mode: currentMode,
         });
       }
     }, 250);
@@ -163,6 +175,7 @@ function startMic() {
         final: true,
         ts: Date.now() / 1000,
         speaker: els.speaker.value,
+        session_mode: currentMode,
       });
       els.liveBuffer.textContent = "";
       lastSentReplace = "";
@@ -249,6 +262,7 @@ els.send.addEventListener("click", () => {
     final: true,
     ts: Date.now() / 1000,
     speaker: els.speaker.value,
+    session_mode: currentMode,
   });
   els.manual.value = "";
 });
@@ -256,4 +270,57 @@ els.send.addEventListener("click", () => {
 els.manual.addEventListener("keydown", (e) => {
   if (e.key === "Enter") els.send.click();
 });
+
+function updateModeButtons() {
+  if (!els.modeCoach || !els.modeNotes) return;
+  if (currentMode === "coach") {
+    els.modeCoach.classList.add("active");
+    els.modeNotes.classList.remove("active");
+  } else {
+    els.modeNotes.classList.add("active");
+    els.modeCoach.classList.remove("active");
+  }
+  if (els.modeLabel) {
+    els.modeLabel.textContent = `mode: ${currentMode}`;
+  }
+}
+
+if (els.modeCoach && els.modeNotes) {
+  els.modeCoach.addEventListener("click", () => {
+    currentMode = "coach";
+    updateModeButtons();
+    // Optionally nudge backend mode immediately
+    fetch(`/session/${encodeURIComponent(els.sessionId.value)}/mode`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "coach" }),
+    }).catch(() => {});
+  });
+  els.modeNotes.addEventListener("click", () => {
+    currentMode = "notes";
+    updateModeButtons();
+    fetch(`/session/${encodeURIComponent(els.sessionId.value)}/mode`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "notes" }),
+    }).catch(() => {});
+  });
+  updateModeButtons();
+}
+
+async function refreshUsage() {
+  try {
+    const sid = els.sessionId.value;
+    const res = await fetch(`/session/${encodeURIComponent(sid)}/usage`);
+    if (!res.ok) return;
+    const data = await res.json();
+    els.usageFull.textContent = JSON.stringify(data, null, 2);
+  } catch {
+    // ignore
+  }
+}
+
+if (els.refreshUsage) {
+  els.refreshUsage.addEventListener("click", refreshUsage);
+}
 
