@@ -27,12 +27,10 @@ def test_websocket_message_flow(monkeypatch):
         })
         msg = ws.receive_json()
         assert msg.get("emit") is True, f"Expected emit=True, got {msg}"
+        assert msg.get("kind") == "final"
         data = msg.get("data", {})
-        # shape checks
-        assert "suggestions" in data
-        assert isinstance(data["suggestions"], list) and len(data["suggestions"]) >= 1
-        assert "follow_up" in data
-        assert "bridge" in data
-        assert "confidence" in data
-        assert "context_ids" in data
-        assert data.get("intent") == "behavioral"
+        assert data.get("response_type") == "coach_final"
+        cf = data.get("coach_final", {})
+        assert "suggestions" in cf and isinstance(cf["suggestions"], list) and len(cf["suggestions"]) >= 1
+        assert "follow_up" in cf and "bridge" in cf and "confidence" in cf and "context_ids" in cf
+        assert "speaker" in data and "transcript" in data and "usage" in data

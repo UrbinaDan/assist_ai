@@ -85,13 +85,13 @@ def maybe_emit(
 
     buf = st.buffer_text.strip()
     if not buf:
-        return IngestResult(emit=False, reason="empty")
+        return IngestResult(emit=False, kind="none", reason="empty")
 
     # FINAL -> always emit (dedupe repeated finals)
     if final:
         h = _h(buf)
         if st.last_final_hash == h:
-            return IngestResult(emit=False, reason="duplicate_final")
+            return IngestResult(emit=False, kind="none", reason="duplicate_final")
         st.last_final_hash = h
 
         out = process_turn(st, kind="final")

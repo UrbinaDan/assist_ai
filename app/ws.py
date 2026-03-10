@@ -47,8 +47,14 @@ async def websocket_endpoint(ws: WebSocket):
 
                 res = maybe_emit(state, final=bool(data.final), detector=DETECTOR)
                 if res.emit:
+                    out = dict(res.data) if res.data else {}
+                    out["created_at"] = getattr(state, "created_at", None)
+                    out["last_seen_at"] = getattr(state, "last_seen_at", None)
+                    if out.get("usage") is not None and isinstance(out["usage"], dict):
+                        out["usage"]["created_at"] = out["created_at"]
+                        out["usage"]["last_seen_at"] = out["last_seen_at"]
                     await ws.send_json(
-                        {"emit": True, "kind": res.kind, "data": res.data, "reason": res.reason}
+                        {"emit": True, "kind": res.kind, "data": out, "reason": res.reason}
                     )
                 else:
                     await ws.send_json({"emit": False, "kind": res.kind, "reason": res.reason})

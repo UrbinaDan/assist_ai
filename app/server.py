@@ -84,8 +84,14 @@ def ingest(ev: TranscriptEvent):
     append_delta(st, ev.text_delta, ts=time.time(), speaker=ev.speaker)
     res = maybe_emit(st, final=ev.final, detector=DETECTOR)
     if res.emit:
+        out = dict(res.data) if res.data else {}
+        out["created_at"] = getattr(st, "created_at", None)
+        out["last_seen_at"] = getattr(st, "last_seen_at", None)
+        if out.get("usage") and isinstance(out["usage"], dict):
+            out["usage"]["created_at"] = out["created_at"]
+            out["usage"]["last_seen_at"] = out["last_seen_at"]
         print(f"[ingest] emit sid={ev.session_id} kind={res.kind} reason={res.reason}", file=sys.stderr, flush=True)
-        return {"emit": True, "kind": res.kind, "data": res.data, "reason": res.reason}
+        return {"emit": True, "kind": res.kind, "data": out, "reason": res.reason}
     return {"emit": False, "kind": res.kind, "reason": res.reason}
 
 

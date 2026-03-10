@@ -104,3 +104,23 @@ body{
 .btn-ghost.small{padding:6px 10px; font-size:12px}
 .modeToggle .active{border-color: var(--accent2); color:var(--accent2)}
 
+/* Five-panel layout */
+.fiveGrid{display:grid; grid-template-columns:1fr 1fr 1fr; grid-template-rows:auto auto; gap:14px; margin-top:14px}
+.fiveGrid .transcriptPanel{grid-column:1; grid-row:1 / -1}
+.fiveGrid .coachPanel{grid-column:2; grid-row:1}
+.fiveGrid .notesPanel{grid-column:2; grid-row:2}
+.fiveGrid .costPanel{grid-column:3; grid-row:1 / -1}
+@media (max-width: 900px){ .fiveGrid{grid-template-columns:1fr} .fiveGrid .transcriptPanel,.fiveGrid .coachPanel,.fiveGrid .notesPanel,.fiveGrid .costPanel{grid-column:1; grid-row:auto} }
+
+.transcriptList{min-height:200px; max-height:380px}
+.transcriptEntry{margin:6px 0; padding:6px 8px; border-radius:8px; background:rgba(0,0,0,.2); font-size:13px}
+.transcriptEntry .ts{color:var(--muted)}
+.transcriptEntry .kind{display:inline-block; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:6px}
+.transcriptEntry .kind.speculative{background:rgba(125,182,255,.2); color:var(--accent2)}
+.transcriptEntry .kind.final{background:rgba(124,247,200,.2); color:var(--accent)}
+.outline{font-style:italic; color:var(--muted); margin:6px 0}
+.summaryBox{min-height:48px}
+.sessionRow{display:flex; align-items:center; flex-wrap:wrap; gap:8px}
+.sessionRow .label{margin:0}
+.sessionRow .status{margin-left:auto}
+

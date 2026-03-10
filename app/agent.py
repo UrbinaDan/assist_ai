@@ -79,6 +79,9 @@ class AgentState:
         "decisions": [],
         "follow_ups": [],
         "topics": [],
+        "summary_so_far": None,
+        "current_topic": None,
+        "open_questions": [],
     })
 
     # Logical speaker roles per session, e.g. {"Me": "candidate", "Interviewer": "interviewer"}
@@ -341,6 +344,52 @@ def confidence(ctx: List[Dict[str, Any]], cls_conf: float) -> float:
     top = ctx[0]["score"] if ctx else 0.0
     return round(0.5*cls_conf + 0.5*top, 2)
 
+
+# -------- Lightweight speculative coach: no drafter, just classifier + retrieval summary --------
+def _build_speculative_coach(cls: Dict[str, Any], ctx: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Question type, one-line outline, and matched themes from retrieval. No full answer."""
+    intent = cls.get("intent", "unknown")
+    outline = "Use your background stories that match the question."
+    if ctx:
+        first = (ctx[0].get("text") or "")[:200].rstrip()
+        if first:
+            outline = first + ("..." if len((ctx[0].get("text") or "")) > 200 else "")
+    themes = [c.get("text", "")[:80].rstrip() + ("..." if len(c.get("text", "")) > 80 else "") for c in ctx[:3] if c.get("text")]
+    return {
+        "question_type": intent,
+        "answer_outline": outline,
+        "matched_themes": themes,
+    }
+
+
+# -------- Framework-based draft for technical/conceptual (no retrieval-heavy personalization) --------
+FRAMEWORK_INTENTS = ("technical", "unknown")
+
+
+def _draft_framework(text: str, intent: str, *, state: Optional[AgentState] = None) -> Dict[str, Any]:
+    """STAR / system design / conceptual outline. Used when retrieval is not the right fit."""
+    # Lightweight: return a short framework reminder; no LLM call by default to keep latency low.
+    if intent == "technical":
+        return {
+            "options": [
+                "Structure: context, approach, trade-offs, result. Give one concrete example.",
+                "If system design: clarify scope, then components, data flow, scale.",
+            ],
+            "follow_up": "Want to go deeper on one part or add metrics?",
+            "bridge": "Happy to go into more detail.",
+            "ctx_ids": [],
+        }
+    return {
+        "options": [
+            "Use a clear structure: situation, your role, action, result.",
+            "Anchor on one example and one takeaway.",
+        ],
+        "follow_up": "Should we add a second example or a lesson learned?",
+        "bridge": "I can expand on any part.",
+        "ctx_ids": [],
+    }
+
+
 def process_turn(state: AgentState, *, kind: str = "final") -> Optional[Dict[str, Any]]:
     # Reset per-turn usage ledger
     state.usage["turn"] = {"by_model": {}, "cost_usd": 0.0}
@@ -349,48 +398,103 @@ def process_turn(state: AgentState, *, kind: str = "final") -> Optional[Dict[str
     state.intent_history.append(cls["intent"])
     ctx = retrieve_context(state.buffer_text, k=4, state=state)
     state.retrieval_cache = {"last_query": state.buffer_text, "doc_ids": [c["id"] for c in ctx]}
-    draft = draft_answer(
-        state.buffer_text,
-        ctx,
-        state.prefs,
-        state=state,
-        fast_only=(kind == "speculative"),
-    )
-    final = style_adapter(refine_answer(draft, ctx), state.prefs)
-    score = confidence(ctx, cls.get("confidence", 0.5))
-
-    _update_notes(state, speaker=getattr(state, "buffer_speaker", "Speaker 1"), text=state.buffer_text)
-    # For final turns (only), optionally refine notes via LLM if enabled.
-    if kind == "final":
-        _enhance_notes_with_llm(state)
     mode = getattr(state, "mode", "coach") or "coach"
     speaker = getattr(state, "buffer_speaker", "Speaker 1")
 
-    if mode == "notes":
-        # Notes-focused schema: emphasize notes and usage.
-        return {
-            "mode": "notes",
-            "speaker": speaker,
-            "transcript": state.buffer_text,
-            "intent": cls["intent"],
-            "notes": state.notes,
-            "usage": state.usage,
-        }
+    _update_notes(state, speaker=speaker, text=state.buffer_text)
+    if kind == "final":
+        _enhance_notes_with_llm(state)
 
-    # Default coach schema
+    # -------- Notes mode: explicit notes_final payload --------
+    if mode == "notes":
+        notes_obj = _notes_payload(state)
+        return _emit_payload(
+            kind=kind,
+            response_type="notes_final",
+            speaker=speaker,
+            transcript=state.buffer_text,
+            usage=state.usage,
+            notes_final={"notes": notes_obj},
+        )
+
+    # -------- Coach mode --------
+    if kind == "speculative":
+        # Lightweight: no drafter; only classifier + retrieval summary.
+        spec = _build_speculative_coach(cls, ctx)
+        return _emit_payload(
+            kind="speculative",
+            response_type="coach_speculative",
+            speaker=speaker,
+            transcript=state.buffer_text,
+            usage=state.usage,
+            coach_speculative=spec,
+        )
+
+    # Final coach: route behavioral/background -> retrieval; technical/conceptual -> framework
+    intent = cls.get("intent", "unknown")
+    if intent in FRAMEWORK_INTENTS:
+        draft = _draft_framework(state.buffer_text, intent, state=state)
+    else:
+        draft = draft_answer(
+            state.buffer_text, ctx, state.prefs, state=state, fast_only=False,
+        )
+    final = style_adapter(refine_answer(draft, ctx), state.prefs)
+    score = confidence(ctx, cls.get("confidence", 0.5))
+    return _emit_payload(
+        kind="final",
+        response_type="coach_final",
+        speaker=speaker,
+        transcript=state.buffer_text,
+        usage=state.usage,
+        coach_final={
+            "suggestions": final["options"],
+            "follow_up": final["follow_up"],
+            "bridge": final["bridge"],
+            "confidence": score,
+            "context_ids": final.get("ctx_ids", []),
+        },
+    )
+
+
+def _notes_payload(state: AgentState) -> Dict[str, Any]:
+    n = state.notes
     return {
-        "mode": "coach",
-        "speaker": speaker,
-        "transcript": state.buffer_text,
-        "suggestions": final["options"],
-        "follow_up": final["follow_up"],
-        "bridge": final["bridge"],
-        "confidence": score,
-        "context_ids": final["ctx_ids"],
-        "intent": cls["intent"],
-        "notes": state.notes,
-        "usage": state.usage,
+        "bullets": n.get("bullets", [])[-60:],
+        "topics": n.get("topics", [])[-40:],
+        "action_items": n.get("action_items", [])[-30:],
+        "decisions": n.get("decisions", [])[-20:],
+        "follow_ups": n.get("follow_ups", [])[-20:],
+        "summary_so_far": n.get("summary_so_far"),
+        "current_topic": n.get("current_topic"),
+        "open_questions": n.get("open_questions", [])[-15:],
     }
+
+
+def _emit_payload(
+    *,
+    kind: str,
+    response_type: str,
+    speaker: str,
+    transcript: str,
+    usage: Dict[str, Any],
+    coach_speculative: Optional[Dict[str, Any]] = None,
+    coach_final: Optional[Dict[str, Any]] = None,
+    notes_final: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    out = {
+        "kind": kind,
+        "response_type": response_type,
+        "speaker": speaker,
+        "transcript": transcript,
+        "usage": usage,
+    }
+    if coach_speculative is not None:
+        out["coach_speculative"] = coach_speculative
+    if coach_final is not None:
+        out["coach_final"] = coach_final
+    if notes_final is not None:
+        out["notes_final"] = notes_final
+    return out
 
 
 def _update_notes(state: AgentState, *, speaker: str, text: str) -> None:
@@ -428,6 +532,10 @@ def _update_notes(state: AgentState, *, speaker: str, text: str) -> None:
         coarse = "planning"
     topics.append({"intent": intent, "tag": coarse})
     state.notes["topics"] = topics[-80:]
+    state.notes["current_topic"] = coarse
+    if "?" in t:
+        state.notes.setdefault("open_questions", []).append(bullet)
+        state.notes["open_questions"] = state.notes["open_questions"][-15:]
 
 
 USE_OAI_NOTES = os.getenv("USE_OAI_NOTES", "false").lower() in ("1", "true", "yes")
@@ -451,6 +559,8 @@ def _enhance_notes_with_llm(state: AgentState) -> None:
         "You are a concise meeting notes assistant.\n"
         "Given recent bullets, action items, and decisions, return JSON with keys:\n"
         "summary (string, <= 3 sentences),\n"
+        "current_topic (string, one short label),\n"
+        "open_questions (array of strings, unresolved questions from the conversation),\n"
         "action_items (array of {text, owner?, due?}),\n"
         "decisions (array of strings),\n"
         "follow_ups (array of strings),\n"
@@ -475,7 +585,7 @@ def _enhance_notes_with_llm(state: AgentState) -> None:
         raw = rsp.choices[0].message.content or "{}"
         data = json.loads(raw)
         if "summary" in data:
-            state.notes["summary"] = data["summary"]
+            state.notes["summary_so_far"] = data["summary"]
         if "action_items" in data:
             # Store plain strings for now for UI simplicity.
             items = []
@@ -498,10 +608,13 @@ def _enhance_notes_with_llm(state: AgentState) -> None:
         if "follow_ups" in data:
             state.notes["follow_ups"] = [str(f) for f in data.get("follow_ups", [])][-40:]
         if "topics" in data:
-            # Merge with existing topics but keep it short.
             cur = [t for t in state.notes.get("topics", []) if isinstance(t, dict)]
             for label in data.get("topics", []):
                 cur.append({"intent": state.intent_history[-1] if state.intent_history else "unknown", "tag": str(label)})
             state.notes["topics"] = cur[-80:]
+        if "current_topic" in data and data["current_topic"]:
+            state.notes["current_topic"] = str(data["current_topic"])
+        if "open_questions" in data:
+            state.notes["open_questions"] = [str(q) for q in data.get("open_questions", [])][-15:]
     except Exception as e:
         print("[notes-llm] error:", e, flush=True)
