@@ -7,12 +7,23 @@ from app.agent import AgentState, EndOfThought
 
 
 def test_mode_switch_via_ws(monkeypatch):
-    def fake_classify(text: str, **kwargs):
-        return {"intent": "behavioral", "entities": {}, "confidence": 0.9}
+    def fake_route_question(text: str, **kwargs):
+        return {"route": "behavioral_story", "intent": "behavioral", "confidence": 0.9, "rationale": ""}
+
     def fake_retrieve(query: str, k: int = 4, **kwargs):
         return [{"id": "f", "text": "x", "score": 0.9, "meta": {}}]
-    monkeypatch.setattr(agent, "classify_question", fake_classify, raising=True)
+
+    def fake_draft_background(route, text, ctx, prefs, *, state=None):
+        return {
+            "options": ["stub one", "stub two"],
+            "follow_up": "More detail?",
+            "bridge": "Tie to role.",
+            "ctx_ids": [c["id"] for c in ctx],
+        }
+
+    monkeypatch.setattr(agent, "route_question", fake_route_question, raising=True)
     monkeypatch.setattr(agent, "retrieve_context", fake_retrieve, raising=True)
+    monkeypatch.setattr(agent, "_draft_background_answer", fake_draft_background, raising=True)
 
     client = TestClient(app)
     with client.websocket_connect("/ws") as ws:
@@ -36,7 +47,7 @@ def test_mode_switch_via_ws(monkeypatch):
         ws.send_json({
             "session_id": "mode_test",
             "session_mode": "coach",
-            "text_delta": "Tell me about a conflict you resolved.",
+            "text_delta": "Walk me through a time you resolved a conflict at work.",
             "final": True,
         })
         msg2 = ws.receive_json()
@@ -45,11 +56,12 @@ def test_mode_switch_via_ws(monkeypatch):
 
 
 def test_speaker_change_flush(monkeypatch):
-    def fake_classify(text: str, **kwargs):
-        return {"intent": "behavioral", "entities": {}, "confidence": 0.9}
+    def fake_route_question(text: str, **kwargs):
+        return {"route": "behavioral_story", "intent": "behavioral", "confidence": 0.9, "rationale": ""}
+
     def fake_retrieve(query: str, k: int = 4, **kwargs):
         return [{"id": "f", "text": "y", "score": 0.9, "meta": {}}]
-    monkeypatch.setattr(agent, "classify_question", fake_classify, raising=True)
+    monkeypatch.setattr(agent, "route_question", fake_route_question, raising=True)
     monkeypatch.setattr(agent, "retrieve_context", fake_retrieve, raising=True)
 
     state = AgentState(session_id="s1")

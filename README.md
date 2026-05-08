@@ -49,6 +49,47 @@ assist_ai/
   - **Final**: `response_type: "notes_final"` with `notes`: `bullets`, `topics`, `action_items`, `decisions`, `follow_ups`, `summary_so_far`, `current_topic`, `open_questions`.  
   - Set `USE_OAI_NOTES=true` to enable optional LLM refinement (summary, owner/due on action items).
 
+## Memory architecture
+
+Static background knowledge can be organized under typed memory folders:
+
+- `data/semantic/`: stable facts, profile, projects, and skills.
+- `data/episodic/`: stories and lived examples.
+- `data/procedural/`: answer strategies, steps, and frameworks.
+- `data/preferences/`: tone and style guidance.
+
+Files directly under `data/` are still treated as legacy memory for backward compatibility. Rebuild the FAISS store after editing typed memory files:
+
+```bash
+python scripts/build_index.py
+```
+
+## Uploadable session context
+
+Temporary context can be uploaded for the current in-memory session from the app UI or via `POST /session/{session_id}/upload-context`. Supported file types are `.txt`, `.md`, and readable `.pdf` files.
+
+Useful examples include resumes, job descriptions, company notes, class notes, and meeting agendas. Uploaded context is chunked in memory, marked as `memory_type: "session"`, and considered before static FAISS memory during RAG retrieval. It is not persisted to disk.
+
+PDF extraction uses `pypdf` and works best for text-based PDFs. Encrypted PDFs, scanned image-only PDFs, or unreadable files return a clear upload error instead of being stored.
+
+## Session logging
+
+Important session events are written locally as JSONL under `logs/sessions/{session_id}.jsonl`. Logs include final coach responses, answer-monitor events, notes updates, and uploaded context events.
+
+Use `GET /session/{session_id}/log` to review parsed events, or `GET /session/{session_id}/log/download` to download the raw JSONL file. These logs are useful for reviewing interview practice, meeting notes, routing decisions, retrieval sources, and cost/debug metadata.
+
+## Latency analytics
+
+WebSocket messages include client and backend timestamps, and emitted payloads include optional latency fields for interpreter, router, retrieval, LLM, backend total, and end-to-end estimates. The debug panel shows a compact latency summary plus raw timestamps when available.
+
+Latency fields are best-effort and backward compatible: older payloads can omit them, and unavailable steps are reported as `null`/`n/a`.
+
+## Streaming coach responses
+
+Coach streaming is optional and disabled by default with `USE_STREAMING_COACH=false`. When enabled, the WebSocket may send `kind: "answer_delta"` messages with `response_type: "coach_stream"` before the normal final `coach_final` payload.
+
+The final payload contract does not change. Notes mode and answer-monitor responses are not streamed.
+
 ## Session and cost
 
 - Sessions are in-memory; `created_at` and `last_seen_at` are tracked.  

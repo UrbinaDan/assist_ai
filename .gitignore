@@ -1,3 +1,12 @@
+# secrets
+.env
+.env.*
+*.env
+
+# API keys
+secrets.json
+config.local.json
+
 # Python
 __pycache__/
 *.py[cod]
@@ -19,5 +28,6 @@ node_modules/
 dist/
 build/
 *.log
+logs/
 
 # NOTE: we do NOT ignore store/ (FAISS index) so Codespaces don’t have to rebuild every time.

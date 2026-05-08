@@ -63,7 +63,13 @@ def maybe_emit(
     if getattr(st, "pending_speaker_flush", False) and st.buffer_text.strip():
         out = process_turn(st, kind="final")
         st.turns.append(
-            {"speaker": getattr(st, "buffer_speaker", None), "user": st.buffer_text, "assistant": out}
+            {
+                "speaker": getattr(st, "buffer_speaker", None),
+                "user": st.buffer_text,
+                "assistant": out,
+                "audio_source": getattr(st, "last_audio_source", None),
+                "speaker_mode": getattr(st, "last_speaker_mode", None),
+            }
         )
         st.buffer_text = ""
         st.last_emit_ts = time.time()
@@ -95,7 +101,15 @@ def maybe_emit(
         st.last_final_hash = h
 
         out = process_turn(st, kind="final")
-        st.turns.append({"speaker": getattr(st, "buffer_speaker", None), "user": st.buffer_text, "assistant": out})
+        st.turns.append(
+            {
+                "speaker": getattr(st, "buffer_speaker", None),
+                "user": st.buffer_text,
+                "assistant": out,
+                "audio_source": getattr(st, "last_audio_source", None),
+                "speaker_mode": getattr(st, "last_speaker_mode", None),
+            }
+        )
         st.buffer_text = ""
         st.last_emit_ts = time.time()
         return IngestResult(emit=True, data=out, kind="final", reason="final")
@@ -104,7 +118,15 @@ def maybe_emit(
     if detector.should_emit(st):
         # Treat detector-driven emits as speculative by default: fast, lightweight suggestions.
         out = process_turn(st, kind="speculative")
-        st.turns.append({"speaker": getattr(st, "buffer_speaker", None), "user": st.buffer_text, "assistant": out})
+        st.turns.append(
+            {
+                "speaker": getattr(st, "buffer_speaker", None),
+                "user": st.buffer_text,
+                "assistant": out,
+                "audio_source": getattr(st, "last_audio_source", None),
+                "speaker_mode": getattr(st, "last_speaker_mode", None),
+            }
+        )
         st.buffer_text = ""
         st.last_emit_ts = time.time()
         return IngestResult(emit=True, data=out, kind="speculative", reason="eot")

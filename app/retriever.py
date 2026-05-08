@@ -1,5 +1,5 @@
 import os, json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import numpy as np
 try:
     import faiss  # type: ignore
@@ -26,12 +26,27 @@ class Retriever:
             self.meta = json.load(f)
         return self
 
-    def search(self, query_vec: np.ndarray, k: int = 4) -> List[Dict[str, Any]]:
+    def search(
+        self,
+        query_vec: np.ndarray,
+        k: int = 4,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
         if self.index is None:
             raise RuntimeError("Retriever not loaded.")
         if query_vec.ndim == 1:
             query_vec = query_vec.reshape(1, -1).astype("float32")
-        D, I = self.index.search(query_vec, k)
+
+        has_filters = bool(filters) and (
+            bool(filters.get("memory_types"))
+            or bool(filters.get("topics"))
+            or float(filters.get("min_priority", 0.0) or 0.0) > 0.0
+        )
+        search_k = k
+        if has_filters:
+            search_k = min(len(self.meta), max(k * 4, 12))
+
+        D, I = self.index.search(query_vec, search_k)
         # IndexFlatL2 returns L2 distance (smaller = better). Convert to similarity-ish [0..1]
         out: List[Dict[str, Any]] = []
         if len(D) and len(I):
@@ -48,6 +63,48 @@ class Retriever:
                     "id": m["id"],
                     "text": m["text"],
                     "score": round(sim, 3),
-                    "meta": {"source": m.get("source")}
+                    "meta": {
+                        "source": m.get("source"),
+                        "source_path": m.get("source_path", m.get("source")),
+                        "memory_type": m.get("memory_type", "legacy"),
+                        "topic": m.get("topic"),
+                        "route": m.get("route", "legacy"),
+                        "priority": m.get("priority", 0.5),
+                    }
                 })
-        return out
+
+        if not has_filters:
+            return out[:k]
+
+        filtered = [row for row in out if _matches_filters(row.get("meta", {}), filters or {})]
+        if not filtered:
+            return out[:k]
+
+        seen = {row["id"] for row in filtered}
+        for row in out:
+            if len(filtered) >= k:
+                break
+            if row["id"] not in seen:
+                filtered.append(row)
+                seen.add(row["id"])
+        return filtered[:k]
+
+
+def _matches_filters(meta: Dict[str, Any], filters: Dict[str, Any]) -> bool:
+    memory_types = filters.get("memory_types") or []
+    if memory_types and meta.get("memory_type", "legacy") not in memory_types:
+        return False
+
+    topics = filters.get("topics") or []
+    if topics and meta.get("topic") not in topics:
+        return False
+
+    min_priority = float(filters.get("min_priority", 0.0) or 0.0)
+    try:
+        priority = float(meta.get("priority", 0.0) or 0.0)
+    except Exception:
+        priority = 0.0
+    if priority < min_priority:
+        return False
+
+    return True

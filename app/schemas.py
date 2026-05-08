@@ -12,6 +12,9 @@ class DeltaIn(BaseModel):
     speaker: Optional[str] = None
     mode: Optional[str] = "append"  # "append" | "replace"
     session_mode: Optional[str] = None  # "coach" | "notes"
+    audio_source: Optional[str] = None  # "mic" | "system" | "manual", etc.
+    speaker_mode: Optional[str] = None  # "manual" | "source"
+    client_sent_at: Optional[float] = None
 
 
 # -------- Explicit response payloads for frontend --------
@@ -59,6 +62,15 @@ class EmitPayload(BaseModel):
     coach_speculative: Optional[CoachSpeculativePayload] = None
     coach_final: Optional[CoachFinalPayload] = None
     notes_final: Optional[NotesFinalPayload] = None
+
+    # Optional / forward-compatible (query interpreter, analytics)
+    interpreted_question: Optional[str] = None
+    route: Optional[str] = None
+    route_confidence: Optional[float] = None
+    retrieval_source: Optional[List[str]] = None
+    memory_filters: Optional[Dict[str, Any]] = None
+    latency: Optional[Dict[str, Any]] = None
+    interpretation: Optional[Dict[str, Any]] = None
 
 
 class AgentResponse(BaseModel):

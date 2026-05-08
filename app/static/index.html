@@ -13,95 +13,243 @@
           <span class="mark">Assist</span>
           <span class="tag">realtime coach + notes</span>
         </div>
-        <div class="sessionRow">
-          <label class="label">Speaker</label>
-          <select id="speaker" class="input">
-            <option value="Me">Me</option>
-            <option value="Interviewer">Interviewer</option>
-            <option value="Participant 3">Participant 3</option>
-          </select>
+        <div class="sessionRow flexWrap">
+          <div class="audioSettings" id="audioSettingsPanel">
+            <div class="audioSettingsTitle">Audio &amp; speaker</div>
+            <div class="segmented" role="group" aria-label="Speaker assignment mode">
+              <label class="seg seg-manual" title="You manually choose who is speaking."
+                ><input type="radio" name="speakerMode" value="manual" checked /> Manual</label
+              >
+              <label
+                class="seg seg-source"
+                title="Microphone utterances = Me. System/tab audio = Interviewer (when capture is enabled)."
+                ><input type="radio" name="speakerMode" value="source" /> Source-based</label
+              >
+            </div>
+            <p class="audioHelp" id="manualModeHelp">You manually choose who is speaking.</p>
+            <p class="audioHelp" id="sourceModeHelp" hidden>
+              Microphone = Me, system audio = Interviewer (when system capture is available).
+            </p>
+            <div id="manualSpeakerRow" class="row tight">
+              <label class="label">Speaker</label>
+              <select id="speaker" class="input">
+                <option value="Interviewer">Interviewer</option>
+                <option value="Me">Me</option>
+                <option value="Participant 3">Participant 3</option>
+              </select>
+            </div>
+            <div id="sourceSpeakerHint" class="sourceHint" hidden>
+              Microphone → Me · System audio → Interviewer
+              <span class="hintSub">System capture: use the button below when it ships.</span>
+            </div>
+            <div class="systemAudioRow">
+              <button type="button" id="systemAudioSoon" class="btn btn-ghost small systemSoon">
+                Start system audio (coming soon)
+              </button>
+            </div>
+            <div id="notesAudioRow" class="notesAudioBlock" hidden>
+              <div class="audioSettingsTitle sub">Notes — capture source</div>
+              <p class="audioHelp">Mic only, system only, or both. System-only relies on manual send until capture arrives.</p>
+              <div class="segmented" role="group" aria-label="Notes audio source">
+                <label class="seg"><input type="radio" name="notesAudio" value="mic" /> Mic only</label>
+                <label class="seg seg-system-only" id="notesSegSystem"
+                  ><input type="radio" name="notesAudio" value="system" id="notesRadioSystem" /> System only</label
+                >
+                <label class="seg"><input type="radio" name="notesAudio" value="both" checked /> Both</label>
+              </div>
+            </div>
+            <div class="contextUploadBlock">
+              <div class="audioSettingsTitle sub">Session context</div>
+              <div class="row tight">
+                <input id="contextFile" class="input fileInput" type="file" accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf" />
+                <button id="uploadContext" class="btn btn-ghost small" type="button">Upload</button>
+              </div>
+              <p class="audioHelp">Supports TXT, Markdown, and readable PDF files.</p>
+              <div id="contextUploadStatus" class="audioHelp"></div>
+              <ul id="contextList" class="contextList"></ul>
+            </div>
+          </div>
+
           <label class="label">Session</label>
           <input id="sessionId" class="input mono" />
           <button id="newSession" class="btn btn-ghost small">New</button>
+
           <span class="modeToggle">
-            <button id="modeCoach" class="btn btn-ghost small active">Coach</button>
-            <button id="modeNotes" class="btn btn-ghost small">Notes</button>
+            <button id="modeCoach" class="btn btn-ghost small active" type="button">Coach</button>
+            <button id="modeNotes" class="btn btn-ghost small" type="button">Notes</button>
           </span>
-          <button id="connect" class="btn small">Connect</button>
-          <button id="mic" class="btn btn-ghost small" disabled>Mic</button>
+
+          <button id="connect" class="btn small" type="button">Connect</button>
+          <button id="mic" class="btn btn-ghost small" type="button" disabled>Mic</button>
           <span id="status" class="status">disconnected</span>
         </div>
       </header>
 
-      <main class="fiveGrid">
-        <!-- 1. Live transcript stream -->
-        <section class="panel transcriptPanel">
+      <main class="mainGrid" id="mainWorkspace" data-mode="coach">
+        <section class="panel transcriptPanel" id="panelTranscript">
           <h2 class="panelTitle">Transcript</h2>
-          <p class="subhead">Speaker, time, speculative/final, and text that triggered the response.</p>
+          <p class="subhead">Chronological conversation. Live previews clear when a turn finalizes.</p>
           <div id="transcriptList" class="transcriptList scroll"></div>
           <div class="row">
             <input id="manual" class="input mono grow" placeholder="Type and Send…" />
-            <button id="send" class="btn small" disabled>Send</button>
+            <button id="send" class="btn small" type="button" disabled>Send</button>
           </div>
         </section>
 
-        <!-- 2. Mode toggle is in header -->
+        <!-- Coach: middle column -->
+        <section class="panel coachMiddlePanel" id="coachMiddlePanel" aria-label="Coach suggestions">
+          <h2 class="panelTitle">Interview coach</h2>
 
-        <!-- 3. Live assistant output (coach: speculative vs final) -->
-        <section class="panel coachPanel">
-          <h2 class="panelTitle">Coach</h2>
-          <div id="coachSpeculative" class="coachSpec box">
-            <div class="subhead">Speculative (preview)</div>
-            <div id="questionType" class="muted"></div>
-            <div id="answerOutline" class="outline"></div>
-            <ul id="matchedThemes" class="list"></ul>
-          </div>
-          <div id="coachFinal" class="coachFinal box">
-            <div class="subhead">Final</div>
-            <ol id="suggestions" class="list"></ol>
-            <div id="followUp" class="muted"></div>
-            <div id="bridge" class="muted"></div>
-            <div id="confidence" class="pillValue mono">—</div>
-          </div>
-        </section>
-
-        <!-- 4. Notes / tasks panel -->
-        <section class="panel notesPanel">
-          <h2 class="panelTitle">Notes & tasks</h2>
-          <div id="summarySoFar" class="summaryBox box"></div>
-          <div class="subhead">Current topic</div>
-          <div id="currentTopic" class="muted"></div>
-          <div class="subhead">Open questions</div>
-          <ul id="openQuestions" class="list"></ul>
-          <div class="subhead">Bullets</div>
-          <ul id="notesBullets" class="list scroll"></ul>
-          <div class="subhead">Action items</div>
-          <ul id="actionItems" class="list"></ul>
-          <div class="subhead">Decisions</div>
-          <ul id="decisions" class="list"></ul>
-          <div class="subhead">Follow-ups</div>
-          <ul id="followUps" class="list"></ul>
-        </section>
-
-        <!-- 5. Cost panel -->
-        <section class="panel costPanel">
-          <h2 class="panelTitle">Cost</h2>
-          <div class="row">
-            <div class="pill">
-              <div class="pillLabel">Session total</div>
-              <div id="sessionCost" class="pillValue mono">$0.00</div>
+          <div class="sectionLabel">Current question</div>
+          <div class="coachCurrentSticky">
+            <div id="coachEmptyState" class="emptyState">
+              Waiting for an interviewer question. Switch speaker to Interviewer (manual) or use source-based mode.
             </div>
-            <div class="pill">
-              <div class="pillLabel">This turn</div>
-              <div id="turnCost" class="pillValue mono">$0.00</div>
+
+            <div id="coachSpeculative" class="coachSpec box coachCard" hidden>
+              <div class="cardTitle">Speculative preview</div>
+              <div id="questionType" class="muted"></div>
+              <div id="answerOutline" class="outline"></div>
+              <ul id="matchedThemes" class="list"></ul>
+            </div>
+
+            <div id="coachStream" class="coachStream box coachCard" hidden>
+              <div class="cardTitle">Drafting</div>
+              <div id="coachStreamText" class="streamText"></div>
+            </div>
+
+            <div id="coachFinal" class="coachFinal box coachCard" hidden>
+              <div class="cardTitle">Suggestion</div>
+              <ol id="suggestions" class="list"></ol>
+              <div class="kvWrap">
+                <span class="kvLabel">Follow-up</span>
+                <div id="followUp" class="muted kv"></div>
+              </div>
+              <div class="kvWrap">
+                <span class="kvLabel">Bridge</span>
+                <div id="bridge" class="muted kv"></div>
+              </div>
+              <div class="kvWrap">
+                <span class="kvLabel">Confidence</span>
+                <div id="confidence" class="pillValue mono kv">—</div>
+              </div>
             </div>
           </div>
-          <div class="subhead">Per minute (est.)</div>
-          <div id="perMinEst" class="pillValue mono">—</div>
-          <div class="subhead">By feature</div>
-          <pre id="byFeature" class="box mono scroll"></pre>
-          <button id="refreshUsage" class="btn btn-ghost small">Refresh usage</button>
         </section>
+
+        <!-- Notes: middle column -->
+        <section class="panel notesMiddlePanel" id="notesMiddlePanel" hidden aria-label="Meeting notes">
+          <h2 class="panelTitle">Notes</h2>
+
+          <h3 class="sectionHeader">Summary</h3>
+          <div id="summarySoFar" class="summaryBox box">—</div>
+
+          <h3 class="sectionHeader">Topics</h3>
+          <div id="currentTopic" class="muted topicLine">—</div>
+
+          <h3 class="sectionHeader">Notes</h3>
+          <ul id="notesBullets" class="list scroll notesBulletList"></ul>
+        </section>
+
+        <!-- Coach: answer monitor + history + cost + debug -->
+        <aside class="sideStack coachRightStack" id="coachRightStack">
+          <section class="panel sidePanel">
+            <h3 class="sectionHeader">Answer monitor</h3>
+            <p class="sideHint">Your answers only (speaker = you).</p>
+            <div id="answerMonitor" class="box monitorBox">
+              <ul id="answerSignals" class="list tightList"></ul>
+            </div>
+          </section>
+
+          <section class="panel sidePanel coachHistoryPanel">
+            <h3 class="sectionHeader">Previous questions</h3>
+            <p class="sideHint">Earlier coach suggestions for interviewer turns.</p>
+            <div id="coachHistory" class="coachHistoryScroll scroll"></div>
+          </section>
+
+          <section class="panel costPanel" id="costPanel">
+            <h3 class="sectionHeader">Cost &amp; usage</h3>
+            <div class="row">
+              <div class="pill">
+                <div class="pillLabel">Session total</div>
+                <div id="sessionCost" class="pillValue mono">$0.00</div>
+              </div>
+              <div class="pill">
+                <div class="pillLabel">This turn</div>
+                <div id="turnCost" class="pillValue mono">$0.00</div>
+              </div>
+            </div>
+            <div class="subhead tightSub">Per minute (est.)</div>
+            <div id="perMinEst" class="pillValue mono">—</div>
+            <div class="subhead tightSub">By feature</div>
+            <pre id="byFeature" class="box mono scroll byFeaturePre"></pre>
+            <button id="refreshUsage" class="btn btn-ghost small" type="button">Refresh usage</button>
+          </section>
+
+          <details class="debugPanel" id="debugPanel">
+            <summary class="debugSummary">Debug</summary>
+            <div class="sessionLogControls">
+              <button id="refreshSessionLog" class="btn btn-ghost small" type="button">Refresh log</button>
+              <a id="downloadSessionLog" class="btn btn-ghost small" href="#" download>Download log</a>
+              <span id="sessionLogCount" class="muted">0 events</span>
+            </div>
+            <ul id="sessionLogPreview" class="contextList"></ul>
+            <div class="debugBody mono" id="debugBody"></div>
+          </details>
+        </aside>
+
+        <!-- Notes: tasks column -->
+        <aside class="sideStack notesRightStack" id="notesRightStack" hidden>
+          <section class="panel sidePanel">
+            <h3 class="sectionHeader">Action items</h3>
+            <ul id="actionItems" class="list tightList"></ul>
+          </section>
+
+          <section class="panel sidePanel">
+            <h3 class="sectionHeader">Decisions</h3>
+            <ul id="decisions" class="list tightList"></ul>
+          </section>
+
+          <section class="panel sidePanel">
+            <h3 class="sectionHeader">Follow ups</h3>
+            <ul id="followUps" class="list tightList"></ul>
+          </section>
+
+          <section class="panel sidePanel">
+            <h3 class="sectionHeader">Open questions</h3>
+            <ul id="openQuestions" class="list tightList"></ul>
+          </section>
+
+          <section class="panel costPanel costPanelNotes">
+            <h3 class="sectionHeader">Cost &amp; usage</h3>
+            <div class="row">
+              <div class="pill">
+                <div class="pillLabel">Session total</div>
+                <div id="sessionCostNotes" class="pillValue mono">$0.00</div>
+              </div>
+              <div class="pill">
+                <div class="pillLabel">This turn</div>
+                <div id="turnCostNotes" class="pillValue mono">$0.00</div>
+              </div>
+            </div>
+            <div class="subhead tightSub">Per minute (est.)</div>
+            <div id="perMinEstNotes" class="pillValue mono">—</div>
+            <div class="subhead tightSub">By feature</div>
+            <pre id="byFeatureNotes" class="box mono scroll byFeaturePre"></pre>
+            <button id="refreshUsageNotes" class="btn btn-ghost small" type="button">Refresh usage</button>
+          </section>
+
+          <details class="debugPanel" id="debugPanelNotes">
+            <summary class="debugSummary">Debug</summary>
+            <div class="sessionLogControls">
+              <button id="refreshSessionLogNotes" class="btn btn-ghost small" type="button">Refresh log</button>
+              <a id="downloadSessionLogNotes" class="btn btn-ghost small" href="#" download>Download log</a>
+              <span id="sessionLogCountNotes" class="muted">0 events</span>
+            </div>
+            <ul id="sessionLogPreviewNotes" class="contextList"></ul>
+            <div class="debugBody mono" id="debugBodyNotes"></div>
+          </details>
+        </aside>
       </main>
     </div>
     <script src="/static/app.js"></script>
