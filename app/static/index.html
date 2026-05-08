@@ -40,16 +40,20 @@
             </div>
             <div id="sourceSpeakerHint" class="sourceHint" hidden>
               Microphone → Me · System audio → Interviewer
-              <span class="hintSub">System capture: use the button below when it ships.</span>
+              <span class="hintSub">System capture: use the button below.</span>
             </div>
             <div class="systemAudioRow">
-              <button type="button" id="systemAudioSoon" class="btn btn-ghost small systemSoon">
-                Start system audio (coming soon)
+              <button type="button" id="systemAudioBtn" class="btn btn-ghost small">
+                Start system audio
               </button>
+              <span id="systemAudioStatus" class="status">inactive</span>
+            </div>
+            <div id="notesSystemWarning" class="audioHelp" style="color: #ffb86c; margin-top: 4px;" hidden>
+              Start system audio to capture system-side notes.
             </div>
             <div id="notesAudioRow" class="notesAudioBlock" hidden>
               <div class="audioSettingsTitle sub">Notes — capture source</div>
-              <p class="audioHelp">Mic only, system only, or both. System-only relies on manual send until capture arrives.</p>
+              <p class="audioHelp">Mic only, system only, or both.</p>
               <div class="segmented" role="group" aria-label="Notes audio source">
                 <label class="seg"><input type="radio" name="notesAudio" value="mic" /> Mic only</label>
                 <label class="seg seg-system-only" id="notesSegSystem"

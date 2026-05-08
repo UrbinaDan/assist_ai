@@ -347,6 +347,20 @@ def debug_classify(p: ClassifyProbe):
         return {"ok": False, "error": str(e)}
 
 
+class SttConfig(BaseModel):
+    enabled: bool
+    token: str | None = None
+
+
+@app.get("/api/stt-config", response_model=SttConfig)
+def get_stt_config():
+    import os
+    token = os.getenv("DEEPGRAM_API_KEY")
+    if not token:
+        return SttConfig(enabled=False)
+    return SttConfig(enabled=True, token=token)
+
+
 from app.ws import router as ws_router
 
 app.include_router(ws_router)

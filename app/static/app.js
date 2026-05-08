@@ -133,11 +133,6 @@ function syncSpeakerUi() {
   syncSpeakerModeRadios();
 }
 
-function refreshNotesSystemOptionStyle() {
-  const seg = document.getElementById("notesSegSystem");
-  if (seg) seg.classList.add("seg--future");
-}
-
 function refreshMicAvailability() {
   const wsOpen = ws && ws.readyState === WebSocket.OPEN;
   const notesBlocksMic = currentMode === "notes" && notesAudioSource === "system";
@@ -183,7 +178,6 @@ let lastSentReplace = "";
 let lastFinalizedMicText = "";
 let lastLivePreviewText = "";
 
-let replaceTimer = null;
 let micFinalizeTimer = null;
 
 let currentMode = "coach";
@@ -459,11 +453,6 @@ function appendTranscriptFromEvent(speaker, ts, kind, text, lifecycle) {
     els.transcriptList.appendChild(div);
     scrollTranscriptToBottom(false);
   }
-}
-
-/** @deprecated name — use appendTranscriptFromEvent */
-function appendTranscript(speaker, ts, kind, text) {
-  appendTranscriptFromEvent(speaker, ts, kind, text, TranscriptLifecycle.TRANSCRIPT_FINAL);
 }
 
 function resetCoachUiToEmpty() {
@@ -782,6 +771,7 @@ function updateDebugPanel(data) {
       end_to_end_estimate: fmtLatencyMs(latencyWithRender.end_to_end_estimate_ms),
     },
     latency: latencyWithRender,
+    system_audio: typeof getSystemAudioDebugInfo === 'function' ? getSystemAudioDebugInfo() : null,
   };
   const text = JSON.stringify(lines, null, 2);
   if (els.debugBody) els.debugBody.textContent = text;
@@ -894,6 +884,7 @@ function updateModeButtons() {
   const notesRow = document.getElementById("notesAudioRow");
   if (notesRow) notesRow.hidden = currentMode !== "notes";
   refreshMicAvailability();
+  if (typeof updateSystemAudioEmphasize === 'function') updateSystemAudioEmphasize();
 }
 
 if (els.modeCoach) {
@@ -923,7 +914,6 @@ if (els.modeNotes) {
 loadAudioPrefs();
 syncNotesAudioRadios();
 syncSpeakerUi();
-refreshNotesSystemOptionStyle();
 updateModeButtons();
 
 document.querySelectorAll('input[name="speakerMode"]').forEach((el) => {
@@ -943,16 +933,219 @@ document.querySelectorAll('input[name="notesAudio"]').forEach((el) => {
     if (!["mic", "system", "both"].includes(notesAudioSource)) return;
     localStorage.setItem(LS_NOTES_AUDIO, notesAudioSource);
     refreshMicAvailability();
+    if (typeof updateSystemAudioEmphasize === 'function') updateSystemAudioEmphasize();
     if (micOn && currentMode === "notes" && notesAudioSource === "system") {
       stopMic();
     }
   });
 });
 
-const systemSoonBtn = document.getElementById("systemAudioSoon");
-if (systemSoonBtn) {
-  systemSoonBtn.addEventListener("click", () => {
-    setStatus("System audio capture is not enabled yet (coming soon).");
+let systemAudioStream = null;
+const systemAudioBtn = document.getElementById("systemAudioBtn");
+
+let sttConfig = { enabled: false, token: null };
+let deepgramWs = null;
+let deepgramRecorder = null;
+let sttStatus = "disabled";
+
+fetch("/api/stt-config")
+  .then(res => res.json())
+  .then(data => {
+    if (data.enabled && data.token) {
+      sttConfig = { enabled: true, token: data.token };
+    }
+  })
+  .catch(err => console.error("Failed to fetch STT config:", err));
+
+
+function setSystemAudioStatus(s) {
+  const el = document.getElementById("systemAudioStatus");
+  let display = s;
+  if (sttConfig.enabled && !!systemAudioStream) {
+    display += ` (STT: ${sttStatus})`;
+  } else if (!sttConfig.enabled && !!systemAudioStream) {
+    display += ` (System STT unavailable)`;
+  }
+  if (el) el.textContent = display;
+}
+
+function updateSttStatus(s) {
+  sttStatus = s;
+  if (systemAudioStream) {
+    setSystemAudioStatus("active with audio track");
+  }
+}
+
+function getSystemAudioDebugInfo() {
+  const info = {
+    active: !!systemAudioStream,
+    stt_status: sttStatus,
+    audioTrackCount: 0,
+    videoTrackCount: 0,
+    audioTracks: [],
+    videoTracks: []
+  };
+  if (systemAudioStream) {
+    const audio = systemAudioStream.getAudioTracks();
+    const video = systemAudioStream.getVideoTracks();
+    info.audioTrackCount = audio.length;
+    info.videoTrackCount = video.length;
+    info.audioTracks = audio.map(t => ({
+      label: t.label,
+      enabled: t.enabled,
+      muted: t.muted,
+      readyState: t.readyState
+    }));
+    info.videoTracks = video.map(t => ({
+      label: t.label,
+      enabled: t.enabled,
+      muted: t.muted,
+      readyState: t.readyState
+    }));
+  }
+  return info;
+}
+
+function updateSystemAudioEmphasize() {
+  const warningEl = document.getElementById("notesSystemWarning");
+  if (!systemAudioBtn) return;
+  
+  const wantsSystem = currentMode === "notes" && (notesAudioSource === "system" || notesAudioSource === "both");
+  if (wantsSystem && !systemAudioStream) {
+    systemAudioBtn.classList.remove("btn-ghost");
+    if (warningEl && notesAudioSource === "system") {
+      warningEl.hidden = false;
+    } else if (warningEl) {
+      warningEl.hidden = true;
+    }
+  } else {
+    systemAudioBtn.classList.add("btn-ghost");
+    if (warningEl) warningEl.hidden = true;
+  }
+}
+
+// Call initially
+if (typeof updateSystemAudioEmphasize === 'function') {
+  updateSystemAudioEmphasize();
+}
+
+
+function cleanupDeepgram() {
+  if (deepgramRecorder) {
+    try { deepgramRecorder.stop(); } catch(e) {}
+    deepgramRecorder = null;
+  }
+  if (deepgramWs) {
+    try { deepgramWs.close(); } catch(e) {}
+    deepgramWs = null;
+  }
+  updateSttStatus(sttConfig.enabled ? "closed" : "disabled");
+}
+
+if (systemAudioBtn) {
+  systemAudioBtn.addEventListener("click", async () => {
+    if (systemAudioStream) {
+      systemAudioStream.getTracks().forEach(t => t.stop());
+      systemAudioStream = null;
+      cleanupDeepgram();
+      systemAudioBtn.textContent = "Start system audio";
+      systemAudioBtn.classList.remove("active");
+      setSystemAudioStatus("stopped");
+      updateSystemAudioEmphasize();
+      updateDebugPanel(lastEmitSnapshot);
+      return;
+    }
+
+    try {
+      setSystemAudioStatus("requesting permission");
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      const audioTracks = stream.getAudioTracks();
+      
+      if (audioTracks.length === 0) {
+        stream.getTracks().forEach(t => t.stop());
+        setSystemAudioStatus("stopped — no audio shared. Please check 'Share audio'.");
+        return;
+      }
+      
+      systemAudioStream = stream;
+
+      if (sttConfig.enabled && sttConfig.token) {
+        updateSttStatus("connecting");
+        deepgramWs = new WebSocket("wss://api.deepgram.com/v1/listen?punctuate=true&model=nova-2", ["token", sttConfig.token]);
+        
+        deepgramWs.onopen = () => {
+          updateSttStatus("connected");
+          deepgramRecorder = new MediaRecorder(systemAudioStream, { mimeType: 'audio/webm' });
+          deepgramRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0 && deepgramWs.readyState === WebSocket.OPEN) {
+              deepgramWs.send(e.data);
+            }
+          };
+          deepgramRecorder.start(250);
+          updateSttStatus("transcribing");
+          updateDebugPanel(lastEmitSnapshot);
+        };
+
+        deepgramWs.onmessage = (msg) => {
+          try {
+            const data = JSON.parse(msg.data);
+            const isFinal = data.is_final;
+            const transcript = data.channel?.alternatives?.[0]?.transcript;
+            
+            if (isFinal && transcript && transcript.trim()) {
+              sendMsg({
+                ...wsCommonFields(),
+                mode: "replace",
+                text_delta: transcript,
+                final: true,
+                speaker: resolveSpeakerForSource("system"),
+                audio_source: "system"
+              });
+            }
+          } catch(e) {
+            console.error("Deepgram parsing error:", e);
+          }
+        };
+
+        deepgramWs.onerror = () => {
+          updateSttStatus("error");
+          updateDebugPanel(lastEmitSnapshot);
+        };
+        
+        deepgramWs.onclose = () => {
+          updateSttStatus("closed");
+          updateDebugPanel(lastEmitSnapshot);
+        };
+      } else {
+        updateSttStatus("disabled");
+      }
+
+      setSystemAudioStatus("active with audio track");
+      systemAudioBtn.textContent = "Stop system audio";
+      systemAudioBtn.classList.add("active");
+      updateSystemAudioEmphasize();
+      updateDebugPanel(lastEmitSnapshot);
+      
+      stream.getTracks().forEach(track => {
+        track.onended = () => {
+          if (systemAudioStream) {
+            systemAudioStream.getTracks().forEach(t => t.stop());
+            systemAudioStream = null;
+            cleanupDeepgram();
+            systemAudioBtn.textContent = "Start system audio";
+            systemAudioBtn.classList.remove("active");
+            setSystemAudioStatus("stopped");
+            updateSystemAudioEmphasize();
+            updateDebugPanel(lastEmitSnapshot);
+          }
+        };
+      });
+    } catch (err) {
+      console.error("Failed to get system audio:", err);
+      setSystemAudioStatus("error");
+      updateSystemAudioEmphasize();
+      updateDebugPanel(lastEmitSnapshot);
+    }
   });
 }
 
@@ -961,6 +1154,18 @@ if (els.newSession) {
   els.newSession.addEventListener("click", () => {
     els.sessionId.value = randId();
     localStorage.setItem("assist_session_id", els.sessionId.value);
+
+    if (systemAudioStream) {
+      systemAudioStream.getTracks().forEach(t => t.stop());
+      systemAudioStream = null;
+      if (typeof cleanupDeepgram === 'function') cleanupDeepgram();
+      if (systemAudioBtn) {
+        systemAudioBtn.textContent = "Start system audio";
+        systemAudioBtn.classList.remove("active");
+      }
+      setSystemAudioStatus("inactive");
+      if (typeof updateSystemAudioEmphasize === 'function') updateSystemAudioEmphasize();
+    }
 
     transcriptEntries = [];
     coachHistory = [];
@@ -1117,11 +1322,6 @@ function stopMic() {
   micOn = false;
 
   if (els.mic) els.mic.textContent = "Mic";
-
-  if (replaceTimer) {
-    clearTimeout(replaceTimer);
-    replaceTimer = null;
-  }
 
   if (micFinalizeTimer) {
     clearTimeout(micFinalizeTimer);
