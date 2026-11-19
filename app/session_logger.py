@@ -49,6 +49,29 @@ def ensure_logs_dir() -> Path:
     return root
 
 
+# Recording raw conversation content is an explicit operator opt-in; never the
+# default. The application processes transcript text in memory for its features,
+# but its diagnostic audit trail should not persist that text automatically.
+SAFE_METADATA_FIELDS = frozenset({
+    "mode",
+    "audio_source",
+    "speaker_mode",
+    "route",
+    "route_confidence",
+    "response_type",
+    "usage",
+    "latency",
+    "chunk_count",
+    "char_count",
+})
+
+
+def _include_conversation_content() -> bool:
+    return os.getenv("SESSION_LOG_INCLUDE_CONTENT", "false").strip().lower() in {
+        "1", "true", "yes",
+    }
+
+
 def log_session_event(session_id: str, event_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     ensure_logs_dir()
     event: Dict[str, Any] = {field: None for field in LOG_EVENT_FIELDS}
@@ -57,7 +80,19 @@ def log_session_event(session_id: str, event_type: str, payload: Dict[str, Any])
         "session_id": session_id,
         "event_type": event_type,
     })
-    event.update(payload or {})
+    # Keep only operational metadata unless the operator has explicitly
+    # enabled content logging AND obtained appropriate participant consent.
+    # Do not store transcript, interpretation, retrieved document identifiers,
+    # or uploaded filenames by default.
+    supplied = payload or {}
+    if _include_conversation_content():
+        event.update(supplied)
+    else:
+        event.update({
+            key: supplied[key]
+            for key in SAFE_METADATA_FIELDS
+            if key in supplied
+        })
 
     path = _log_path(session_id)
     with path.open("a", encoding="utf-8") as f:
