@@ -95,17 +95,15 @@ async def websocket_endpoint(ws: WebSocket):
         while True:
             raw = await ws.receive_text()
             backend_received_at = time.time()
-            print(f"[ws] raw message: {raw}", flush=True)
 
             try:
                 payload = json.loads(raw)
                 data = DeltaIn(**payload)
 
+                # Log only protocol metadata, never raw transcripts or speaker content.
                 print(
-                    f"[ws] received sid={data.session_id} "
-                    f"text={data.text!r} text_delta={data.text_delta!r} "
-                    f"final={data.final} speaker={data.speaker!r} mode={data.session_mode!r} "
-                    f"audio_source={data.audio_source!r} speaker_mode={data.speaker_mode!r}",
+                    f"[ws] received final={data.final} mode={data.session_mode!r} "
+                    f"audio_source={data.audio_source!r}",
                     flush=True,
                 )
 
@@ -144,14 +142,8 @@ async def websocket_endpoint(ws: WebSocket):
 
                 else:
                     delta = data.text_delta if data.text_delta is not None else (data.text or "")
-                    print(f"[ws] append delta={delta!r}", flush=True)
                     append_delta(state, delta, ts=data.ts, speaker=speaker)
 
-                print(
-                    f"[ws] buffer after append: speaker={state.buffer_speaker!r} "
-                    f"buffer_text={state.buffer_text!r}",
-                    flush=True,
-                )
 
                 res = maybe_emit(state, final=bool(data.final), detector=DETECTOR)
 
@@ -192,8 +184,10 @@ async def websocket_endpoint(ws: WebSocket):
                     )
 
             except Exception as e:
-                print(f"[ws] error: {e}", flush=True)
-                await ws.send_json({"error": str(e)})
+                # Avoid reflecting exception messages, which may contain private
+                # transcript or provider details, into server logs or the browser.
+                print(f"[ws] message handling failed ({type(e).__name__})", flush=True)
+                await ws.send_json({"error": "Unable to process message"})
 
     except WebSocketDisconnect:
         print("[ws] connection closed", flush=True)
