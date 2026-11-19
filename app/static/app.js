@@ -207,10 +207,9 @@ function wsUrl() {
 
 function sendMsg(obj) {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
-    console.warn("sendMsg skipped: websocket not open", { obj, wsState: ws?.readyState });
+    console.warn("sendMsg skipped: websocket not open", { wsState: ws?.readyState });
     return;
   }
-  console.log("Sending WS message:", obj);
   ws.send(JSON.stringify(obj));
 }
 
@@ -1284,7 +1283,6 @@ function startMic() {
   };
 
   recognition.onresult = (ev) => {
-    console.log("speech result", ev);
 
     let interim = "";
     let finalText = "";
