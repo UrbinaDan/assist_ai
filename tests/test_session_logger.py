@@ -45,3 +45,50 @@ def test_read_session_log_missing_is_empty(tmp_path, monkeypatch):
     monkeypatch.setenv("SESSION_LOG_DIR", str(tmp_path))
 
     assert read_session_log("missing") == []
+
+
+def test_metadata_only_logging_is_default_and_does_not_persist_transcripts(tmp_path, monkeypatch):
+    monkeypatch.setenv("SESSION_LOG_DIR", str(tmp_path))
+    monkeypatch.delenv("SESSION_LOG_INCLUDE_CONTENT", raising=False)
+    secret = "Sensitive interview answer with private personal details"
+    event = log_session_event(
+        "privacy",
+        "coach_final",
+        {
+            "mode": "coach",
+            "route": "behavioral_story",
+            "raw_transcript": secret,
+            "clean_transcript": secret,
+            "interpreted_question": secret,
+            "interpretation": {"question": secret},
+            "retrieval_source": [secret],
+            "filename": "confidential-document.pdf",
+            "usage": {"total_tokens": 42},
+        },
+    )
+    assert event["route"] == "behavioral_story"
+    assert event["usage"] == {"total_tokens": 42}
+    assert event["raw_transcript"] is None
+    assert event["clean_transcript"] is None
+    assert event["interpreted_question"] is None
+    assert event["interpretation"] is None
+    assert event["retrieval_source"] is None
+    stored = (tmp_path / "privacy.jsonl").read_text(encoding="utf-8")
+    assert secret not in stored
+    assert "confidential-document.pdf" not in stored
+
+
+def test_content_logging_requires_explicit_opt_in(tmp_path, monkeypatch):
+    monkeypatch.setenv("SESSION_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("SESSION_LOG_INCLUDE_CONTENT", "true")
+    text = "Deliberately opted-in transcript"
+    log_session_event("opt_in", "coach_final", {"raw_transcript": text})
+    assert read_session_log("opt_in")[0]["raw_transcript"] == text
+
+
+def test_unrecognized_opt_in_values_do_not_enable_content_logging(tmp_path, monkeypatch):
+    monkeypatch.setenv("SESSION_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("SESSION_LOG_INCLUDE_CONTENT", "maybe")
+    text = "Should not be persisted"
+    log_session_event("unknown_opt", "coach_final", {"raw_transcript": text})
+    assert text not in (tmp_path / "unknown_opt.jsonl").read_text(encoding="utf-8")
